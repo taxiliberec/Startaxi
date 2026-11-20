@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: startaxi-dispecink-liberec
+    runtime: node
+    plan: free
+    region: frankfurt
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: TAXI_PROXY_HTTPS
+        value: "1"
+      - key: DATABASE_URL
+        sync: false
+      - key: TAXI_OWNER_KEY
+        sync: false
+      - key: TAXI_ACCESS_KEYS
+        sync: false
