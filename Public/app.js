@@ -119,6 +119,7 @@ function lockApp(){
  sessionGeneration++; revision=-1; drivers=[]; vehicles=[]; profile=null; state=null; live=false; stopGps();
  for(const form of [$('#booking'),$('#own-ride'),$('#profile-form'),$('#owner-form'),$('#employee-form')]) form.reset();
  for(const dialog of document.querySelectorAll('dialog[open]')) dialog.close();
+ $('#activity').replaceChildren();
  fillDefaultPermissions();
  render();
 }
@@ -217,12 +218,39 @@ function renderRevenue(){
    '<div class="revenue-totals"><div>Vybrané období<strong>'+cash(total)+'</strong></div><div>Předchozí období<strong>'+cash(previous)+'</strong></div><div>Rozdíl<strong>'+(total>previous?'+':'')+cash(total-previous)+'</strong></div><div>Dokončené jízdy<strong>'+rides+'</strong></div></div>'+
    '<p>Srovnání s obdobím '+fmtDate(previousStart)+' až '+fmtDate(previousEnd)+'.</p><div class="scroll"><table><thead><tr><th>Datum</th><th>Vybrané období</th><th>Předchozí období</th></tr></thead><tbody>'+chart+'</tbody></table></div></section>';
 }
+const shiftColors=['#1d4ed8','#087549','#6d28d9','#a2410d','#9d174d','#0e7490','#a11b26','#555b18'];
+function shiftColor(driver){
+ let index=0;
+ for(const character of driver) index=(index*31+character.codePointAt(0))%shiftColors.length;
+ return shiftColors[index];
+}
+function shiftDetails(shifts,{highlight=false,openIds=new Set()}={}){
+ const ridesByShift=new Map(shifts.map(shift=>[shift.id,[]]));
+ for(const job of state.jobs){
+   if(job.status==='done') ridesByShift.get(job.shift)?.push(job);
+ }
+ return shifts.map(shift=>{
+   const name=driverName(shift.driver)||shift.driver;
+   const rides=ridesByShift.get(shift.id).sort((a,b)=>a.done-b.done);
+   const accent=highlight?' shift-employee':'';
+   const color=highlight?' style="--shift-color:'+shiftColor(shift.driver)+'"':'';
+   const open=openIds.has(shift.id)?' open':'';
+   return '<details class="shift'+accent+'" data-shift-id="'+esc(shift.id)+'"'+color+open+'>'+
+     '<summary><strong>'+esc(name)+'</strong><span>'+fmtDate(shift.date)+' · '+shift.count+' jízd · '+cash(shift.cents)+
+     (highlight&&shift.closed?' · Uzavřeno '+jobTime(shift.closed):'')+'</span></summary>'+rideTable(rides)+'</details>';
+ }).join('');
+}
 function renderActivity(){
  const labels={userRenamed:'Upraveno jméno uživatele',userRemoved:'Odstraněn uživatel',vehicleRemoved:'Odstraněno vozidlo',employeeCreated:'Vytvořen účet zaměstnance',employeePermissions:'Změněna oprávnění zaměstnance',ownerCreated:'Vytvořen účet majitele',driver:'Vytvořen účet řidiče',create:'Vytvořena zakázka',createOwn:'Vytvořena vlastní zakázka',cancelJob:'Zakázka zrušena',editPickupTime:'Upraven čas vyzvednutí',editJob:'Upraveny údaje zakázky',assign:'Přiřazena zakázka',accept:'Přijata zakázka',pickup:'Vyzvednut zákazník',complete:'Dokončena jízda',close:'Uzavřena směna'};
  const formatter=new Intl.DateTimeFormat('cs-CZ',{dateStyle:'short',timeStyle:'medium',timeZone:'Europe/Prague'});
  const activity=state.activity||[];
+ const panel=$('#activity');
+ const openIds=new Set([...panel.querySelectorAll('.shift-employee[open]')].map(detail=>detail.dataset.shiftId));
+ const closures=shiftDetails(state.shifts,{highlight:true,openIds});
  const view=activity.map(e=>'<tr><td>'+formatter.format(e.time)+'</td><td>'+esc(isOwner(e.actor)?(state.owners?.find(owner=>owner.id===e.actor)?.firstName||'Majitel'):(state.employees?.find(employee=>employee.id===e.actor)?.firstName||driverName(e.actor)||(e.actor==='dispatch'?'Dispečer':e.actor)))+'</td><td>'+esc(labels[e.type])+'</td><td>'+esc(e.detail)+'</td></tr>').join('');
- $('#activity').innerHTML=renderRevenue()+'<div class="panel detail"><h2>Historie provozu</h2>'+(view?'<div class="scroll"><table><thead><tr><th>Čas</th><th>Uživatel</th><th>Událost</th><th>ID nebo datum směny</th></tr></thead><tbody>'+view+'</tbody></table></div>':'<p class="empty">Nové události se zobrazí zde.</p>')+'</div>';
+ panel.innerHTML=renderRevenue()+'<div class="panel detail"><h2>Historie provozu</h2>'+
+   '<div class="activity-shifts"><h3>Denní uzávěrky zaměstnanců</h3>'+
+   (closures||'<p class="empty">Zatím nejsou žádné uzavřené směny.</p>')+'</div>'+(view?'<div class="scroll"><table><thead><tr><th>Čas</th><th>Uživatel</th><th>Událost</th><th>ID nebo datum směny</th></tr></thead><tbody>'+view+'</tbody></table></div>':'<p class="empty">Nové události se zobrazí zde.</p>')+'</div>';
 }
 function jobRoute(j){
  return '<div class="route"><span>'+icon('pin')+esc(j.pickup)+'</span><span>'+icon('flag')+esc(j.dropoff)+'</span></div>';
@@ -256,8 +284,10 @@ function renderHistory(){
  const visible=id=>fleetHistory()?!filter||filter===id:actor===id;
  const jobs=state.jobs.filter(j=>j.status==='done'&&day(j.done)===reportDate&&visible(j.driver)).sort((a,b)=>b.done-a.done);
  const shifts=state.shifts.filter(s=>s.date===reportDate&&visible(s.driver));
- const canClose=can('closeShift')&&jobs.some(j=>!j.shift)&&!busy(state,actor);
- $('#history').innerHTML='<div class="panel"><div class="panelhead"><span class="headicon">'+icon('chart')+'</span><div><h2>Dokončené jízdy</h2><p>'+fmtDate(reportDate)+'</p></div></div><div class="filters"><label>Datum<input type="date" id="reportDate" value="'+esc(reportDate)+'"></label>'+(fleetHistory()?'<label>Řidič<select id="filter"><option value="">Všichni řidiči</option>'+options+'</select></label>':'')+(canClose?'<button data-shift>Uzavřít směnu</button>':'')+'</div>'+rideTable(jobs)+'</div><div class="panel" style="margin-top:16px"><div class="panelhead"><span class="headicon">'+icon('calendar')+'</span><div><h2>Uzavřené směny</h2></div></div>'+ (shifts.map(s=>'<details class="shift"><summary>'+fmtDate(s.date)+' · '+esc(driverName(s.driver))+' · '+s.count+' jízd · '+cash(s.cents)+'</summary>'+rideTable(jobs.filter(j=>j.shift===s.id))+'</details>').join('')||'<p class="empty">Pro vybraný den nejsou uzavřené směny.</p>')+'</div>';
+ const canClose=can('closeShift')&&jobs.some(j=>j.driver===actor&&!j.shift)&&!busy(state,actor);
+ $('#history').innerHTML='<div class="panel"><div class="panelhead"><span class="headicon">'+icon('chart')+'</span><div><h2>Dokončené jízdy</h2><p>'+fmtDate(reportDate)+'</p></div></div><div class="filters"><label>Datum<input type="date" id="reportDate" value="'+esc(reportDate)+'"></label>'+(fleetHistory()?'<label>Řidič<select id="filter"><option value="">Všichni řidiči</option>'+options+'</select></label>':'')+'</div>'+rideTable(jobs)+(canClose?
+   '<div class="shift-close-action"><button type="button" class="shift-close-button" data-shift>'+icon('calendar')+
+   '<span><strong>Uzavřít denní směnu</strong><small>Zkontrolovat a potvrdit tržbu</small></span></button></div>':'')+'</div><div class="panel" style="margin-top:16px"><div class="panelhead"><span class="headicon">'+icon('calendar')+'</span><div><h2>Uzavřené směny</h2></div></div>'+ (shiftDetails(shifts)||'<p class="empty">Pro vybraný den nejsou uzavřené směny.</p>')+'</div>';
 }
 function navigate(address){
  return 'https://www.google.com/maps/dir/?api=1&travelmode=driving&dir_action=navigate&destination='+encodeURIComponent(address);
@@ -624,7 +654,7 @@ for(const form of [$('#booking'),$('#own-ride'),$('#job-edit-form')]){
          const {suggestions:results}=await api('geocode',{address});
          const suggestions=results.filter(result=>validPoint(result.point));
          if(request!==sequence||generation!==sessionGeneration) return;
-         showStatus(suggestions.length?'':'Žádná shoda. Zkuste doplnit číslo domu nebo obec.');
+         showStatus(suggestions.length?'':'Žádná shoda. Zkuste upravit název ulice nebo doplnit obec.');
          for(const result of suggestions){
            const choice=document.createElement('button');
            choice.type='button';

@@ -121,3 +121,16 @@
 @keyframes ride-arrival { from { opacity: .55; transform: translateY(6px) scale(.98); } to { opacity: 1; transform: none; } }
 @keyframes ride-pulse { 0%, 65%, 100% { box-shadow: 0 0 0 0 transparent; } 12% { box-shadow: 0 0 0 4px #15865366; } 60% { box-shadow: 0 0 0 10px #15865300; } }
 @media (prefers-reduced-motion: reduce) { .ride-panel .ride-accept { animation: none; } }
+
+.shift-close-action { display: flex; justify-content: center; padding: 26px 16px 20px; }
+.shift-close-action .shift-close-button { display: flex; align-items: center; gap: 12px; padding: 14px 22px; border-radius: 14px; border: 1px solid #1843a8; background: #224caa; color: white; text-align: left; }
+.shift-close-button:hover { filter: brightness(1.1); }
+.shift-close-button strong, .shift-close-button small { display: block; }
+.shift-close-button strong { font-size: 1.12rem; }
+.shift-close-button small { margin-top: 3px; color: #e0eaff; }
+.shift-close-button svg { width: 24px; height: 24px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; }
+.activity-shifts { margin-bottom: 20px; }
+.shift-employee { border-inline-start: 4px solid var(--shift-color); margin-block: 8px; }
+.shift-employee summary { color: var(--shift-color); background: color-mix(in srgb, var(--shift-color) 8%, white); }
+.shift[data-shift-id] summary { cursor: pointer; }
+.shift[data-shift-id] summary span { margin-inline-start: 8px; }
