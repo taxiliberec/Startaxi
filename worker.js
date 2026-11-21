@@ -1,4 +1,4 @@
-import {change,busy,drivers,fleet,isOwner,employeeRole,permissionsFor,availablePermissions,allows,actionPermissions,validPoint,meters} from './public/model.js';
+import {change,busy,drivers,fleet,isOwner,employeeRole,permissionsFor,availablePermissions,allows,actionPermissions,validPoint,meters,day} from './public/model.js';
 import assets from './assets.generated.js';
 
 const json=(payload,status=200,headers={})=>Response.json(payload,{status,headers:{'Cache-Control':'no-store',...headers}});
@@ -40,6 +40,25 @@ function activePosition(state,id,now){
   const active=state.sessions?.[position.sessionId];
   return position.sessionId==='legacy'||(active?.actor===id&&active.expires>now)?position:null;
 }
+function recordDriverActivity(state,driver,position,now){
+  const start=position?.activityAt;
+  const end=Math.min(now,(position?.time??0)+45000);
+  if(!Number.isFinite(start)||end<=start) return;
+  const totals=(state.driverActivity??={})[driver]??={};
+  const firstDay=day(start), lastDay=day(end-1);
+  if(firstDay===lastDay){
+    totals[firstDay]=(totals[firstDay]??0)+end-start;
+    return;
+  }
+  let low=start, high=end-1;
+  while(high-low>1){
+    const middle=Math.floor((low+high)/2);
+    if(day(middle)===firstDay) low=middle;
+    else high=middle;
+  }
+  totals[firstDay]=(totals[firstDay]??0)+high-start;
+  totals[lastDay]=(totals[lastDay]??0)+end-high;
+}
 const storedAccount=(state,id)=>state.employees?.[id]??state.profiles?.[id];
 const registeredAccounts=state=>[...Object.values(state.employees||{}),...Object.values(state.profiles||{})];
 const publicProfile=({id,firstName,lastName,username})=>({id,firstName,lastName,username});
@@ -77,7 +96,7 @@ function employeeDirectory(state,users){
     const fallback=drivers.find(driver=>driver.id===id)?.name;
     const [firstName='',lastName='']=(fallback||'').split(' ');
     return {...publicProfile(account??{id,firstName,lastName,username:id,...state.userNames?.[id]}),
-      role:employeeRole(state,id),permissions:permissionsFor(state,id),vehicleId:assignedVehicle(state,id)?.id};
+      configured:Boolean(account),role:employeeRole(state,id),permissions:permissionsFor(state,id),vehicleId:assignedVehicle(state,id)?.id};
   }).sort((a,b)=>a.lastName.localeCompare(b.lastName,'cs')||a.firstName.localeCompare(b.firstName,'cs')||a.username.localeCompare(b.username));
 }
 const publicVehicle=({id,make,model,photo})=>({id,make,model,hasPhoto:Boolean(photo)});
@@ -108,7 +127,7 @@ function view(state,actor,revision,users){
     if(!can('fleetMap')&&(id!==actor||!can('gps'))) return [];
     const active=activePosition(state,id,now);
     if(!active) return [];
-    const {sessionId,...position}=active;
+    const {sessionId,activityAt,...position}=active;
     return [[id,position]];
   }));
   const permitted={
@@ -131,6 +150,7 @@ function view(state,actor,revision,users){
     .filter(id=>id&&state.removedUsers?.[id]).map(id=>[id,state.removedUsers[id]]));
   if(isOwner(actor)){
     permitted.activity=state.activity||[];
+    permitted.driverActivity=state.driverActivity||{};
     permitted.owners=ownerDirectory(state,users);
     permitted.employees=employeeDirectory(state,users);
   }
@@ -296,12 +316,21 @@ async function handleApi(request,env,path){
     if(active||legacy) await updateState(env.DB,state=>{
       if(active) delete state.sessions[digest];
       const driver=active?.actor||legacy;
-      if(state.positions[driver]?.sessionId===(legacy?'legacy':digest)) delete state.positions[driver];
+      const position=state.positions[driver];
+      if(position?.sessionId===(legacy?'legacy':digest)){
+        recordDriverActivity(state,driver,position,Date.now());
+        delete state.positions[driver];
+      }
     });
     return json({ok:true},200,{'Set-Cookie':cookie('',0)});
   }
   if(!actor) return json({error:'Přihlaste se.'},401);
-  if(path==='state'&&request.method==='GET') return json(view(current.state,actor,current.revision,users));
+  if(path==='state'&&request.method==='GET'){
+    const tag='"'+actor+':'+current.revision+'"';
+    const headers={'Cache-Control':'no-store','ETag':tag};
+    if(request.headers.get('If-None-Match')===tag) return new Response(null,{status:304,headers});
+    return json(view(current.state,actor,current.revision,users),200,headers);
+  }
   if(path==='profile'&&request.method==='POST'){
     const input=await decode(request);
     const fields=profileInput(input);
@@ -383,6 +412,7 @@ async function handleApi(request,env,path){
       (s.removedUsers??={})[id]=displayName(user);
       const directory=s.employees?.[id]?s.employees:s.profiles;
       if(directory) delete directory[id];
+      recordDriverActivity(s,id,s.positions[id],Date.now());
       for(const records of [s.userNames,s.vehicleAssignments,s.employeePermissions,s.positions,s.occupied]){
         if(records) delete records[id];
       }
@@ -432,7 +462,10 @@ async function handleApi(request,env,path){
         const employee=employeeDirectory(s,users).find(entry=>entry.id===id);
         if(!employee) throw Error('Účet zaměstnance nebyl nalezen.');
         (s.employeePermissions??={})[id]=validatePermissions(permissions,employee.role);
-        if(!permissions.includes('gps')) delete s.positions[id];
+        if(!permissions.includes('gps')){
+          recordDriverActivity(s,id,s.positions[id],Date.now());
+          delete s.positions[id];
+        }
         record(s,actor,'employeePermissions',employee.username);
       });
       return json(view(state,actor,revision,users));
@@ -515,18 +548,23 @@ async function handleApi(request,env,path){
     const {state,revision}=await updateState(env.DB,s=>{
       const sessionId=legacy?'legacy':digest;
       checkSession(s);
+      const now=Date.now();
       if(action.type==='gpsStop'){
         if(s.positions[actor]?.sessionId!==sessionId) return false;
+        recordDriverActivity(s,actor,s.positions[actor],now);
         delete s.positions[actor];
         return;
       }
       if(Object.hasOwn(actionPermissions,action.type)&&!allows(permissionsFor(s,actor),actionPermissions[action.type])) throw new AccessDenied('Přístup zamítnut.');
       if(action.type==='assign'&&!activePosition(s,action.driver,Date.now())) throw Error('Řidič nesdílí aktuální polohu.');
       const previous=s.positions[actor];
-      change(s,actor,action);
+      change(s,actor,action,now);
       if(action.type==='gps'){
         if(previous===s.positions[actor]) return false;
+        const expiry=previous?.sessionId==='legacy'?now:s.sessions?.[previous?.sessionId]?.expires;
+        if(expiry) recordDriverActivity(s,actor,previous,Math.min(now,expiry));
         s.positions[actor].sessionId=sessionId;
+        if(s.positions[actor].time>now-45000) s.positions[actor].activityAt=now;
         return;
       }
       if(action.type==='availability') return;
