@@ -134,3 +134,36 @@
 .shift-employee summary { color: var(--shift-color); background: color-mix(in srgb, var(--shift-color) 8%, white); }
 .shift[data-shift-id] summary { cursor: pointer; }
 .shift[data-shift-id] summary span { margin-inline-start: 8px; }
+
+.owner-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+.owner-tabs button[aria-pressed="true"] { background: #224caa; border-color: #224caa; color: white; }
+.owner-section .filters { margin-block: 14px; }
+.owner-chart-scroll { overflow-x: auto; margin-block: 18px 12px; }
+.owner-chart { display: flex; gap: 8px; min-width: max-content; padding: 8px 4px; }
+.owner-chart-day { flex: 1 0 24px; display: grid; justify-items: center; gap: 6px; color: var(--muted); }
+.owner-bars { display: flex; align-items: end; justify-content: center; gap: 3px; width: 100%; height: 160px; border-bottom: 1px solid var(--line); background: repeating-linear-gradient(to top, transparent 0 39px, var(--line) 39px 40px); }
+.owner-bar { display: block; width: min(38%, 25px); height: var(--bar-height); background: #285de4; border-radius: 4px 4px 0 0; }
+.owner-chart-key { display: inline-block; width: 10px; height: 10px; margin-inline-end: 5px; border-radius: 2px; background: #285de4; }
+.owner-bar-previous { background: #a2410d; }
+.owner-chart-data summary, #owner-day-log summary { cursor: pointer; }
+
+#map:active { cursor: grabbing; }
+#map, #driver-map, #location-map { isolation: isolate; background: #e7eeec; }
+.mappanel #map, #driver-map { margin-inline: 10px; border: 1px solid #d8e0e4; border-radius: 14px; }
+#driver-map { margin-bottom: 10px; }
+.mappanel .maptools { border: 1px solid #d9e2ed; border-radius: 12px; box-shadow: 0 5px 20px #14284533; }
+.mappanel .maptools button { width: 42px; height: 42px; color: #183152; background: #fff; }
+.mappanel .maptools button:hover { background: #edf3ff; }
+.mappanel .maptools button:focus-visible { outline: 2px solid #285de4; outline-offset: -3px; }
+#map .mapcredit, #driver-map .mapcredit, #location-map .mapcredit { border-radius: 7px 0 0 0; padding: 3px 6px; background: #fffffff0; color: #263447; }
+#map .marker[data-car] { width: 39px; height: 39px; border-radius: 12px; box-shadow: 0 4px 10px #12284666; }
+#map .marker[data-car].selected { outline: 2px solid #285de4; outline-offset: 2px; z-index: 3; }
+#map .marker[data-car].selected::after { content: ''; position: absolute; inset: -3px; border: 2px solid #285de4; border-radius: 14px; pointer-events: none; animation: map-selected-pulse 1.7s ease-out infinite; }
+@keyframes map-selected-pulse { from { opacity: .8; scale: 1; } to { opacity: 0; scale: 1.5; } }
+.destination-marker { background: #6d28a8; }
+#map .map-driver-label, #driver-map .marker small { border: 1px solid #e0e6ec; border-radius: 8px; padding: 4px 7px; box-shadow: 0 3px 10px #182c412e; }
+.map-vehicle-status { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 5px; padding: 4px 8px; border-radius: 8px; background: #f0f4f8; }
+.map-vehicle-status i { width: 8px; height: 8px; border-radius: 50%; }
+.location-pin { transform-origin: 50% 87.5%; filter: drop-shadow(0 2px 3px #172c4870); }
+.location-pin svg { width: 42px; height: 42px; fill: #ffe9e8; stroke: #ae1a2b; stroke-width: 1.8; }
+@media (prefers-reduced-motion: reduce) { #map .marker[data-car].selected::after { animation: none; opacity: 0; } }

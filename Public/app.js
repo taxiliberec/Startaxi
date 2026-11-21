@@ -73,7 +73,10 @@ function chimeRide(){
  }
 }
 async function api(path,body){
- const r=await fetch('/api/'+path,{method:body?'POST':'GET',headers:body?{'Content-Type':'application/json'}:{},body:body&&JSON.stringify(body),cache:'no-store'});
+ const headers=body?{'Content-Type':'application/json'}:{};
+ if(path==='state'&&live) headers['If-None-Match']='"'+actor+':'+revision+'"';
+ const r=await fetch('/api/'+path,{method:body?'POST':'GET',headers,body:body&&JSON.stringify(body),cache:'no-store'});
+ if(r.status===304) return null;
  const data=await r.json();
  if(!r.ok) throw Object.assign(Error(data.error||'Chyba spojení.'),{status:r.status});
  return data;
@@ -86,6 +89,8 @@ function receive(data){
  const jobsChanged=!wasLive||JSON.stringify(state.jobs)!==JSON.stringify(data.state.jobs);
  const otherChanged=!wasLive||JSON.stringify([state.employees,state.activity,state.shifts,state.occupied,state.owners])!==JSON.stringify([data.state.employees,data.state.activity,data.state.shifts,data.state.occupied,data.state.owners]);
  const previous=actor;
+ const driverStatsChanged=wasLive&&page==='activity'&&ownerTab==='drivers'&&
+   JSON.stringify(state.driverActivity)!==JSON.stringify(data.state.driverActivity);
  const permissionsChanged=JSON.stringify(permissions)!==JSON.stringify(data.permissions);
  role=data.role; permissions=data.permissions;
  if(!can('gps')&&gps!==null) stopGps();
@@ -112,6 +117,7 @@ function receive(data){
  if(fleetHistory()&&can('history')&&data.state.jobs.filter(j=>j.status==='done').length>noticeCount&&wasLive) notify('Zakázka dokončena.');
  noticeCount=state.jobs.filter(j=>j.status==='done').length;
  if(newRide||jobsChanged||otherChanged||permissionsChanged||vehicleChanged||previous!==actor) render();
+ else if(driverStatsChanged) refreshDriverStats();
  else if(page==='dispatch'){stats();renderMap();}
  else if(page==='driver'){stats();renderDriverMap();}
 }
@@ -186,37 +192,117 @@ function render(){
  if(page==='activity') renderActivity();
 }
 const offsetDate=(date,days)=>new Date(Date.parse(date+'T00:00:00Z')+days*86400000).toISOString().slice(0,10);
-let revenueEnd=day();
-let revenueStart=offsetDate(revenueEnd,-6);
-let revenueDriver='';
-function renderRevenue(){
- const count=(Date.parse(revenueEnd)-Date.parse(revenueStart))/86400000+1;
- const previousStart=offsetDate(revenueStart,-count);
- const previousEnd=offsetDate(revenueStart,-1);
- const totals=new Map();
+const ownerTabs={revenue:'Tržby',comparison:'Porovnání měsíců',closures:'Uzávěrky',drivers:'Statistiky řidičů',activity:'Historie provozu'};
+let ownerTab='revenue';
+const ownerFilters={
+ revenueMode:'week',revenueDate:day(),revenueMonth:day().slice(0,7),revenueDriver:'',
+ comparisonMonth:day().slice(0,7),comparisonDriver:'',closuresDate:day(),driverMonth:day().slice(0,7),driverStats:'',
+ activityDate:day()
+};
+const ownerDrivers=()=>state.employees.filter(employee=>employee.role==='driver'&&employee.configured);
+function driverFilter(id){
+ const options=ownerDrivers().map(driver=>'<option value="'+esc(driver.id)+'" '+
+   (ownerFilters[id]===driver.id?'selected':'')+'>'+esc(displayUserName(driver))+'</option>').join('');
+ return '<label>Řidič<select id="'+id+'" data-owner-filter><option value="">Všichni řidiči</option>'+options+'</select></label>';
+}
+function ownerDateFilter(id,label,type='date'){
+ return '<label>'+label+'<input type="'+type+'" id="'+id+'" value="'+esc(ownerFilters[id])+'" data-owner-filter required></label>';
+}
+function monthRange(month){
+ const first=month+'-01';
+ const next=new Date(first+'T12:00:00Z');
+ next.setUTCMonth(next.getUTCMonth()+1);
+ return {start:first,end:offsetDate(next.toISOString().slice(0,10),-1)};
+}
+function revenueRange(mode,date,month){
+ if(mode==='month') return monthRange(month);
+ if(mode==='day') return {start:date,end:date};
+ const weekday=new Date(date+'T12:00:00Z').getUTCDay();
+ const start=offsetDate(date,-((weekday+6)%7));
+ return {start,end:offsetDate(start,6)};
+}
+function revenueDays({start,end},driver){
+ const count=(Date.parse(end)-Date.parse(start))/86400000+1;
+ const rows=Array.from({length:count},(_,index)=>({date:offsetDate(start,index),cents:0,rides:0}));
+ const dates=new Map(rows.map(row=>[row.date,row]));
  for(const job of state.jobs){
-   if(job.status!=='done'||(revenueDriver&&job.driver!==revenueDriver)) continue;
-   const date=day(job.done);
-   if(date<previousStart||date>revenueEnd) continue;
-   const entry=totals.get(date)||{cents:0,count:0};
-   entry.cents+=job.cents;
-   entry.count++;
-   totals.set(date,entry);
+   if(job.status!=='done'||!Number.isFinite(job.done)||(driver&&job.driver!==driver)) continue;
+   const row=dates.get(day(job.done));
+   if(row){row.cents+=job.cents;row.rides++;}
  }
- const rows=Array.from({length:count},(_,index)=>{
-   const date=offsetDate(revenueStart,index);
-   const previousDate=offsetDate(previousStart,index);
-   return {date,previousDate,cents:totals.get(date)?.cents||0,previous:totals.get(previousDate)?.cents||0,count:totals.get(date)?.count||0};
- });
- const total=rows.reduce((sum,row)=>sum+row.cents,0);
- const previous=rows.reduce((sum,row)=>sum+row.previous,0);
- const rides=rows.reduce((sum,row)=>sum+row.count,0);
- const maximum=Math.max(1,...rows.flatMap(row=>[row.cents,row.previous]));
- const options=drivers.map(d=>'<option value="'+esc(d.id)+'" '+(d.id===revenueDriver?'selected':'')+'>'+esc(d.name)+'</option>').join('');
- const chart=rows.map(row=>'<tr><th scope="row">'+fmtDate(row.date)+'</th><td><span class="revenue-value">'+cash(row.cents)+'</span><progress max="'+maximum+'" value="'+row.cents+'" aria-label="Tržby '+fmtDate(row.date)+'"></progress></td><td><span class="revenue-value">'+cash(row.previous)+'</span><progress class="previous" max="'+maximum+'" value="'+row.previous+'" aria-label="Tržby '+fmtDate(row.previousDate)+'"></progress></td></tr>').join('');
- return '<section class="panel detail revenue"><h2>Tržby z dokončených jízd</h2><div class="filters"><label>Od<input id="revenueStart" type="date" value="'+revenueStart+'"></label><label>Do<input id="revenueEnd" type="date" value="'+revenueEnd+'"></label><label>Řidič<select id="revenueDriver"><option value="">Všichni řidiči</option>'+options+'</select></label></div>'+
-   '<div class="revenue-totals"><div>Vybrané období<strong>'+cash(total)+'</strong></div><div>Předchozí období<strong>'+cash(previous)+'</strong></div><div>Rozdíl<strong>'+(total>previous?'+':'')+cash(total-previous)+'</strong></div><div>Dokončené jízdy<strong>'+rides+'</strong></div></div>'+
-   '<p>Srovnání s obdobím '+fmtDate(previousStart)+' až '+fmtDate(previousEnd)+'.</p><div class="scroll"><table><thead><tr><th>Datum</th><th>Vybrané období</th><th>Předchozí období</th></tr></thead><tbody>'+chart+'</tbody></table></div></section>';
+ return rows;
+}
+const monthName=month=>new Intl.DateTimeFormat('cs-CZ',{month:'long',year:'numeric',timeZone:'UTC'}).format(new Date(month+'-01T12:00:00Z'));
+function revenueChart(rows,previous=[]){
+ const peak=Math.max(1,...rows.map(row=>row.cents),...previous.map(row=>row.cents));
+ const columns=Array.from({length:Math.max(rows.length,previous.length)},(_,index)=>{
+   const current=rows[index], last=previous[index];
+   const bar=(row,style)=>row
+     ? '<span class="owner-bar '+style+'" style="--bar-height:'+row.cents/peak*100+'%" title="'+fmtDate(row.date)+' · '+cash(row.cents)+'"></span>'
+     : '';
+   return '<div class="owner-chart-day"><div class="owner-bars">'+bar(current,'')+bar(last,'owner-bar-previous')+
+     '</div><small>'+Number((current??last).date.slice(-2))+'.</small></div>';
+ }).join('');
+ const values=rows.map((row,index)=>'<tr><th scope="row">'+fmtDate(row.date)+'</th><td>'+cash(row.cents)+'</td>'+
+   (previous.length?'<td>'+(previous[index]?cash(previous[index].cents):'—')+'</td>':'')+'</tr>').join('')+
+   previous.slice(rows.length).map(row=>'<tr><th scope="row">'+Number(row.date.slice(-2))+'. den</th><td>—</td><td>'+cash(row.cents)+'</td></tr>').join('');
+ return '<div class="owner-chart-scroll"><div class="owner-chart" aria-hidden="true">'+columns+'</div></div>'+
+   '<details class="shift owner-chart-data"><summary>Částky po dnech</summary><div class="scroll"><table><thead><tr><th>Den</th><th>Vybrané období</th>'+
+   (previous.length?'<th>Předchozí měsíc</th>':'')+'</tr></thead><tbody>'+values+'</tbody></table></div></details>';
+}
+function renderRevenue(){
+ const {revenueMode,revenueDate,revenueMonth,revenueDriver}=ownerFilters;
+ const {start,end}=revenueRange(revenueMode,revenueDate,revenueMonth);
+ const rows=revenueDays({start,end},revenueDriver);
+ const modes=[['day','Denní tržby'],['week','Týdenní tržby'],['month','Měsíční tržby']];
+ return '<h2>Tržby z dokončených jízd</h2><div class="filters"><label>Období<select id="revenueMode" data-owner-filter>'+
+   modes.map(([value,label])=>'<option value="'+value+'" '+(value===revenueMode?'selected':'')+'>'+label+'</option>').join('')+
+   '</select></label>'+ (revenueMode==='month'?ownerDateFilter('revenueMonth','Měsíc','month'):
+     ownerDateFilter('revenueDate',revenueMode==='week'?'Den v týdnu':'Datum'))+driverFilter('revenueDriver')+'</div>'+
+   '<p>'+fmtDate(start)+(end===start?'':' – '+fmtDate(end))+'</p>'+
+   '<div class="revenue-totals"><div>Tržby<strong>'+cash(rows.reduce((sum,row)=>sum+row.cents,0))+'</strong></div>'+
+   '<div>Dokončené jízdy<strong>'+rows.reduce((sum,row)=>sum+row.rides,0)+'</strong></div></div>'+revenueChart(rows);
+}
+function renderComparison(){
+ const {comparisonMonth,comparisonDriver}=ownerFilters;
+ const range=monthRange(comparisonMonth);
+ const previousMonth=offsetDate(range.start,-1).slice(0,7);
+ const current=revenueDays(range,comparisonDriver), previous=revenueDays(monthRange(previousMonth),comparisonDriver);
+ const total=current.reduce((sum,row)=>sum+row.cents,0), last=previous.reduce((sum,row)=>sum+row.cents,0);
+ const difference=total-last;
+ return '<h2>Porovnání měsíců</h2><div class="filters">'+ownerDateFilter('comparisonMonth','Měsíc','month')+
+   driverFilter('comparisonDriver')+'</div><div class="revenue-totals"><div><span class="owner-chart-key"></span>'+esc(monthName(comparisonMonth))+
+   '<strong>'+cash(total)+'</strong></div><div><span class="owner-chart-key owner-bar-previous"></span>'+esc(monthName(previousMonth))+
+   '<strong>'+cash(last)+'</strong></div><div>Rozdíl<strong>'+(difference>0?'+':'')+cash(difference)+'</strong></div></div>'+
+   revenueChart(current,previous);
+}
+function driverStatsRows(){
+ const {driverMonth,driverStats}=ownerFilters;
+ const {start,end}=monthRange(driverMonth);
+ const selected=ownerDrivers().filter(driver=>!driverStats||driver.id===driverStats);
+ const totals=new Map(selected.map(driver=>[driver.id,{rides:0,shifts:0}]));
+ for(const job of state.jobs){
+   if(job.status!=='done'||!Number.isFinite(job.done)||!totals.has(job.driver)) continue;
+   const date=day(job.done);
+   if(date>=start&&date<=end) totals.get(job.driver).rides++;
+ }
+ for(const shift of state.shifts){
+   if(shift.date>=start&&shift.date<=end&&totals.has(shift.driver)) totals.get(shift.driver).shifts++;
+ }
+ return selected.map(driver=>{
+   const {rides,shifts}=totals.get(driver.id);
+   const dates=Object.entries(state.driverActivity?.[driver.id]??{}).filter(([date])=>date>=start&&date<=end);
+   const minutes=Math.floor(dates.reduce((sum,[,ms])=>sum+ms,0)/60000);
+   const time=dates.length?(minutes<1?'Méně než 1 min':Math.floor(minutes/60)+' h '+minutes%60+' min'):'—';
+   return '<tr><th scope="row">'+esc(displayUserName(driver))+'</th><td>'+rides+'</td><td>'+time+'</td><td>'+shifts+'</td></tr>';
+ }).join('');
+}
+function renderDriverStats(){
+ const rows=driverStatsRows();
+ return '<h2>Statistiky řidičů</h2><div class="filters">'+ownerDateFilter('driverMonth','Měsíc','month')+driverFilter('driverStats')+
+   '</div><p>Jedna dokončená zakázka se počítá jako jeden zákazník. Aktivita se měří podle sdílení platné GPS polohy od nasazení této verze.</p>'+
+   (rows?'<div class="scroll"><table><thead><tr><th>Řidič</th><th>Přepravené zakázky</th><th>Aktivní pro dispečink (GPS)</th><th>Uzavřené směny</th></tr></thead><tbody class="owner-driver-summary">'+
+     rows+'</tbody></table></div>':'<p class="empty">Zatím nejsou k dispozici žádní řidiči s profilem.</p>');
 }
 const shiftColors=['#1d4ed8','#087549','#6d28d9','#a2410d','#9d174d','#0e7490','#a11b26','#555b18'];
 function shiftColor(driver){
@@ -240,17 +326,51 @@ function shiftDetails(shifts,{highlight=false,openIds=new Set()}={}){
      (highlight&&shift.closed?' · Uzavřeno '+jobTime(shift.closed):'')+'</span></summary>'+rideTable(rides)+'</details>';
  }).join('');
 }
-function renderActivity(){
+function refreshDriverStats(){
+ const table=$('#activity .owner-driver-summary');
+ if(!table) return;
+ table.innerHTML=driverStatsRows();
+}
+function renderOwnerHistory(open){
  const labels={userRenamed:'Upraveno jméno uživatele',userRemoved:'Odstraněn uživatel',vehicleRemoved:'Odstraněno vozidlo',employeeCreated:'Vytvořen účet zaměstnance',employeePermissions:'Změněna oprávnění zaměstnance',ownerCreated:'Vytvořen účet majitele',driver:'Vytvořen účet řidiče',create:'Vytvořena zakázka',createOwn:'Vytvořena vlastní zakázka',cancelJob:'Zakázka zrušena',editPickupTime:'Upraven čas vyzvednutí',editJob:'Upraveny údaje zakázky',assign:'Přiřazena zakázka',accept:'Přijata zakázka',pickup:'Vyzvednut zákazník',complete:'Dokončena jízda',close:'Uzavřena směna'};
- const formatter=new Intl.DateTimeFormat('cs-CZ',{dateStyle:'short',timeStyle:'medium',timeZone:'Europe/Prague'});
- const activity=state.activity||[];
+ const date=ownerFilters.activityDate;
+ const entries=(state.activity??[]).filter(entry=>Number.isFinite(entry.time)&&day(entry.time)===date);
+ const rows=entries.map(entry=>{
+   const user=[...state.owners,...state.employees].find(user=>user.id===entry.actor);
+   const name=user?displayUserName(user):driverName(entry.actor)||(entry.actor==='dispatch'?'Dispečer':entry.actor);
+   return '<tr><td>'+jobTime(entry.time)+'</td><td>'+esc(name)+'</td><td>'+esc(labels[entry.type]??entry.type)+
+     '</td><td>'+esc(entry.detail)+'</td></tr>';
+ }).join('');
+ return '<h2>Historie provozu</h2><div class="filters">'+ownerDateFilter('activityDate','Den provozu')+'</div>'+
+   (rows?'<details id="owner-day-log" class="shift" data-date="'+date+'"'+(open?' open':'')+'><summary><strong>'+fmtDate(date)+
+     '</strong> · '+entries.length+' událostí</summary><div class="scroll"><table><thead><tr><th>Čas</th><th>Uživatel</th><th>Událost</th><th>Údaj</th></tr></thead><tbody>'+
+     rows+'</tbody></table></div></details>':'<p class="empty">Pro tento den nejsou uložené žádné události.</p>');
+}
+function renderActivity(){
  const panel=$('#activity');
+ const focused=document.activeElement;
+ const focusId=panel.contains(focused)&&focused.matches('[data-owner-filter]')?focused.id:null;
  const openIds=new Set([...panel.querySelectorAll('.shift-employee[open]')].map(detail=>detail.dataset.shiftId));
- const closures=shiftDetails(state.shifts,{highlight:true,openIds});
- const view=activity.map(e=>'<tr><td>'+formatter.format(e.time)+'</td><td>'+esc(isOwner(e.actor)?(state.owners?.find(owner=>owner.id===e.actor)?.firstName||'Majitel'):(state.employees?.find(employee=>employee.id===e.actor)?.firstName||driverName(e.actor)||(e.actor==='dispatch'?'Dispečer':e.actor)))+'</td><td>'+esc(labels[e.type])+'</td><td>'+esc(e.detail)+'</td></tr>').join('');
- panel.innerHTML=renderRevenue()+'<div class="panel detail"><h2>Historie provozu</h2>'+
-   '<div class="activity-shifts"><h3>Denní uzávěrky zaměstnanců</h3>'+
-   (closures||'<p class="empty">Zatím nejsou žádné uzavřené směny.</p>')+'</div>'+(view?'<div class="scroll"><table><thead><tr><th>Čas</th><th>Uživatel</th><th>Událost</th><th>ID nebo datum směny</th></tr></thead><tbody>'+view+'</tbody></table></div>':'<p class="empty">Nové události se zobrazí zde.</p>')+'</div>';
+ const log=panel.querySelector('#owner-day-log');
+ const logOpen=log?.dataset.date===ownerFilters.activityDate&&log.open;
+ const chartOpen=panel.querySelector('.owner-chart-data')?.open;
+ for(const key of ['revenueDriver','comparisonDriver','driverStats']){
+   if(ownerFilters[key]&&!ownerDrivers().some(driver=>driver.id===ownerFilters[key])) ownerFilters[key]='';
+ }
+ const sections={
+   revenue:renderRevenue,comparison:renderComparison,drivers:renderDriverStats,
+   closures:()=>{
+     const shifts=state.shifts.filter(shift=>shift.date===ownerFilters.closuresDate);
+     return '<h2>Denní uzávěrky zaměstnanců</h2><div class="filters">'+ownerDateFilter('closuresDate','Den směny')+'</div>'+
+       (shiftDetails(shifts,{highlight:true,openIds})||'<p class="empty">Pro tento den nejsou uzavřené směny.</p>');
+   },
+   activity:()=>renderOwnerHistory(logOpen)
+ };
+ panel.innerHTML='<nav class="owner-tabs" aria-label="Přehledy majitele">'+Object.entries(ownerTabs).map(([key,label])=>
+   '<button type="button" data-owner-tab="'+key+'" aria-pressed="'+(key===ownerTab)+'">'+label+'</button>').join('')+
+   '</nav><section class="panel detail owner-section">'+sections[ownerTab]()+'</section>';
+ if(chartOpen&&panel.querySelector('.owner-chart-data')) panel.querySelector('.owner-chart-data').open=true;
+ if(focusId) document.getElementById(focusId)?.focus({preventScroll:true});
 }
 function jobRoute(j){
  return '<div class="route"><span>'+icon('pin')+esc(j.pickup)+'</span><span>'+icon('flag')+esc(j.dropoff)+'</span></div>';
@@ -279,7 +399,9 @@ function rideTable(jobs){
    '</td><td>'+jobDuration(j)+'</td><td><b>'+cash(j.cents)+'</b></td></tr>').join('')+'</tbody></table></div>';
 }
 function renderHistory(){
- const historyDrivers=[...drivers,...Object.entries(state.removedDriverNames??{}).map(([id,name])=>({id,name}))];
+ const historyDrivers=isOwner(actor)?ownerDrivers().map(driver=>({id:driver.id,name:displayUserName(driver)})):
+   [...drivers,...Object.entries(state.removedDriverNames??{}).map(([id,name])=>({id,name}))];
+ if(filter&&!historyDrivers.some(driver=>driver.id===filter)) filter='';
  const options=historyDrivers.map(d=>'<option value="'+esc(d.id)+'" '+(d.id===filter?'selected':'')+'>'+esc(d.name)+'</option>').join('');
  const visible=id=>fleetHistory()?!filter||filter===id:actor===id;
  const jobs=state.jobs.filter(j=>j.status==='done'&&day(j.done)===reportDate&&visible(j.driver)).sort((a,b)=>b.done-a.done);
@@ -371,26 +493,57 @@ for(const kind of ['fleet','driver']){
    renderDriverMap();
  });
 }
+const mapTileLayers=new WeakMap();
 function renderTiles(layer,kind,level,x,y,w,h){
  const style=mapPreferences[kind];
  const {tile,credit}=mapStyles[style];
  const key=[style,level,x,y,w,h].join();
- if(layer.dataset.view===key) return;
- layer.dataset.view=key;
- layer.parentElement.querySelector('.mapcredit').innerHTML=credit;
- const count=2**level;
- let tiles='';
- for(let tx=Math.floor(x/256);tx<=Math.floor((x+w)/256);tx++) for(let ty=Math.floor(y/256);ty<=Math.floor((y+h)/256);ty++){
-   if(ty<0||ty>=count) continue;
-   const wrap=((tx%count)+count)%count;
-   tiles+='<img alt="" draggable="false" style="left:'+(tx*256-x)+'px;top:'+(ty*256-y)+'px" src="'+tile(level,wrap,ty)+'">';
+ let view=mapTileLayers.get(layer);
+ if(view?.key===key) return;
+ if(view?.style!==style||view.level!==level){
+   const fallback=document.createElement('div');
+   fallback.className='mapfallback';
+   const message=document.createElement('small');
+   message.textContent='Mapový podklad se načítá';
+   fallback.append(message);
+   layer.replaceChildren(fallback);
+   if(view?.style!==style) layer.parentElement.querySelector('.mapcredit').innerHTML=credit;
+   view={style,level,images:new Map(),message};
+   mapTileLayers.set(layer,view);
  }
- layer.innerHTML='<div class="mapfallback"><small>Mapový podklad se načítá</small></div>'+tiles;
- layer.querySelectorAll('img').forEach(img=>img.addEventListener('error',()=>{
-   img.style.display='none';
-   layer.querySelector('.mapfallback small').textContent='Mapový podklad je nedostupný';
- }));
+ view.key=key;
+ const count=2**level;
+ const firstX=Math.floor(x/256), lastX=Math.floor((x+w)/256);
+ const firstY=Math.max(0,Math.floor(y/256)), lastY=Math.min(count-1,Math.floor((y+h)/256));
+ const visible=new Set();
+ const added=document.createDocumentFragment();
+ for(let tx=firstX;tx<=lastX;tx++) for(let ty=firstY;ty<=lastY;ty++){
+   const id=tx+':'+ty;
+   visible.add(id);
+   let img=view.images.get(id);
+   if(!img){
+     img=document.createElement('img');
+     img.alt='';
+     img.draggable=false;
+     img.addEventListener('error',()=>{
+       img.hidden=true;
+       view.message.textContent='Mapový podklad je nedostupný';
+     },{once:true});
+     img.src=tile(level,((tx%count)+count)%count,ty);
+     view.images.set(id,img);
+     added.append(img);
+   }
+   img.style.left=(tx*256-x)+'px';
+   img.style.top=(ty*256-y)+'px';
+ }
+ for(const [id,img] of view.images){
+   if(visible.has(id)) continue;
+   img.remove();
+   view.images.delete(id);
+ }
+ if(added.childNodes.length) layer.append(added);
 }
+let lastDriverMapMarkers;
 function renderDriverMap(){
  const map=$('#driver-map'), w=map.clientWidth, h=map.clientHeight;
  if(!live||page!=='driver'||(!can('driverRide')&&!can('gps'))||!w||!h) return;
@@ -399,12 +552,14 @@ function renderDriverMap(){
  const stops=[
    [fresh(position)?position:null,'taxi','green','Vaše poloha'],
    [j?.status==='onboard'?null:j?.pickupPoint,'person','pickup-marker','Vyzvednutí'],
-   [j?.target,'flag','gray','Doručení']
+   [j?.target,'flag','destination-marker','Doručení']
  ].filter(([point])=>point);
  const messages=stops.map(([, , ,label])=>label);
  if(!fresh(position)) messages.push('GPS poloha není dostupná');
  if(j&&(!j.target||(j.status!=='onboard'&&!j.pickupPoint))) messages.push('U některé adresy chybí bod na mapě');
- $('#driver-map-status').textContent=messages.join(' · ');
+ const status=messages.join(' · ');
+ const mapStatus=$('#driver-map-status');
+ if(mapStatus.textContent!==status) mapStatus.textContent=status;
 
  let level=stops.length?16:13, points, bounds;
  do {
@@ -417,10 +572,14 @@ function renderDriverMap(){
  const middle=bounds?{x:(bounds[0]+bounds[1])/2,y:(bounds[2]+bounds[3])/2}:project(center,level);
  const x=Math.round(middle.x-w/2), y=Math.round(middle.y-h/2);
  renderTiles(map.querySelector('.map-tiles'),'driver',level,x,y,w,h);
- map.querySelector('.map-markers').innerHTML=stops.map(([,symbol,color,label],index)=>{
+ const markers=stops.map(([,symbol,color,label],index)=>{
    const point=points[index];
    return '<span class="marker stop-marker '+color+'" style="left:'+(point.x-x)+'px;top:'+(point.y-y)+'px" role="img" aria-label="'+label+'">'+icon(symbol)+'<small>'+label+'</small></span>';
  }).join('');
+ if(markers!==lastDriverMapMarkers){
+   map.querySelector('.map-markers').innerHTML=markers;
+   lastDriverMapMarkers=markers;
+ }
 }
 let lastMarkerMarkup, lastStatusMarkup;
 function renderMap(){
@@ -438,7 +597,7 @@ function renderMap(){
      const label=d.name+' · '+(j?statusText[j.status]:occupied(d.id)?'obsazený':'volný')+(p.accuracy!=null?' · ±'+Math.round(p.accuracy)+' m':'');
    const markerPosition='left:'+(point.x-x)+'px;top:'+(point.y-y)+'px';
    const vehicle=vehicleById(d.vehicleId);
-   const marker='<button type="button" '+(can('assign')?'':'disabled ')+'class="marker '+color+(selected===d.id?' selected':'')+'" style="'+markerPosition+'" data-car="'+d.id+'" title="'+esc(label)+'" aria-label="'+esc(label)+'">'+icon('taxi')+'</button>';
+   const marker='<button type="button" '+(can('assign')?'':'disabled ')+'class="marker '+color+(selected===d.id?' selected':'')+'" style="'+markerPosition+'" data-car="'+esc(d.id)+'" title="'+esc(label)+'" aria-label="'+esc(label)+'" aria-pressed="'+(selected===d.id)+'">'+icon('taxi')+'</button>';
    return marker+'<div class="map-driver-label" style="'+markerPosition+'"><strong>'+esc(d.lastName||d.name)+'</strong>'+vehicleLink(vehicle)+'</div>';
  }).join('')+state.jobs.flatMap(j=>{
    if(j.status==='cancelled') return [];
@@ -446,7 +605,7 @@ function renderMap(){
    if(done&&Date.now()-j.done>=5000) return [];
    return [
      ...(j.status!=='onboard'&&!done&&j.pickupPoint?[[j.pickupPoint,'person','pickup-marker','Vyzvednutí · '+j.pickup]]:[]),
-     ...(j.target?[[j.target,'check',done?'green':'gray','Doručení · '+j.dropoff]]:[])
+     ...(j.target?[[j.target,done?'check':'flag',done?'green':'destination-marker','Doručení · '+j.dropoff]]:[])
    ].map(([position,symbol,color,label])=>{
      const point=project(position), left=point.x-x, top=point.y-y;
      if(left<0||left>w||top<0||top>h) return '';
@@ -455,21 +614,28 @@ function renderMap(){
  }).join('');
  if(lastMarkerMarkup!==markers){$('#markers').innerHTML=markers;lastMarkerMarkup=markers;}
  const status=drivers.filter(d=>fresh(state.positions[d.id]));
- const statusMarkup=status.map(d=>'<span><strong>'+esc(d.lastName||d.name)+'</strong> · '+(occupied(d.id)?'obsazený':'volný')+vehicleLink(vehicleById(d.vehicleId))+'</span>').join('');
+ const statusMarkup=status.map(d=>{
+   const isOccupied=occupied(d.id);
+   return '<span class="map-vehicle-status"><i class="'+(isOccupied?'red':'green')+'" aria-hidden="true"></i><strong>'+
+     esc(d.lastName||d.name)+'</strong> · '+(isOccupied?'obsazený':'volný')+vehicleLink(vehicleById(d.vehicleId))+'</span>';
+ }).join('');
  if(lastStatusMarkup!==statusMarkup){$('#vehicle-status').innerHTML=statusMarkup;lastStatusMarkup=statusMarkup;}
 }
-let drag;
+let drag, mapFrame;
 $('#map').addEventListener('pointerdown',e=>{
- if(e.target.closest('button,select,label')) return;
+ if(!e.isPrimary||e.button!==0||e.target.closest('button,select,label,a')) return;
  drag={x:e.clientX,y:e.clientY,...{ox:offset.x,oy:offset.y}};
  e.currentTarget.setPointerCapture(e.pointerId);
 });
 $('#map').addEventListener('pointermove',e=>{
  if(!drag) return;
  offset={x:drag.ox+e.clientX-drag.x,y:drag.oy+e.clientY-drag.y};
- renderMap();
+ if(!mapFrame) mapFrame=requestAnimationFrame(()=>{
+   mapFrame=0;
+   renderMap();
+ });
 });
-for(const event of ['pointerup','pointercancel']) $('#map').addEventListener(event,()=>drag=null);
+for(const event of ['pointerup','pointercancel','lostpointercapture']) $('#map').addEventListener(event,()=>drag=null);
 new ResizeObserver(renderMap).observe($('#map'));
 new ResizeObserver(renderDriverMap).observe($('#driver-map'));
 $('#today').textContent=new Intl.DateTimeFormat('cs-CZ',{dateStyle:'full',timeZone:'Europe/Prague'}).format(new Date());
@@ -479,7 +645,8 @@ const locationTiles=locationMap.querySelector('.map-tiles');
 const locationConfirm=$('#location-confirm');
 const locationAddress=$('#location-address');
 const locationZoomIn=$('#location-zoom-in'), locationZoomOut=$('#location-zoom-out');
-locationMap.querySelector('.location-pin').innerHTML=icon('pin');
+const locationPin=locationMap.querySelector('.location-pin');
+locationPin.innerHTML=icon('pin');
 let locationDraft, locationDrag, locationLookupTimer;
 function renderLocationMap(){
  if(!locationEditor.open||!locationDraft) return;
@@ -500,6 +667,14 @@ function moveLocationPin(dx,dy){
    lng:((((x+dx)%size)+size)%size)/size*360-180
  };
  locationDraft.placed=true;
+ if(locationPin.animate&&!matchMedia('(prefers-reduced-motion: reduce)').matches){
+   locationPin.getAnimations?.().forEach(animation=>animation.cancel());
+   locationPin.animate([
+     {translate:'0 -9px',scale:'1.1'},
+     {translate:'0 2px',scale:'.95',offset:.65},
+     {translate:'0 0',scale:'1'}
+   ],{duration:300,easing:'cubic-bezier(.18,.75,.24,1)'});
+ }
  lookupLocationAddress();
  renderLocationMap();
 }
@@ -787,9 +962,16 @@ document.addEventListener('click',async e=>{
  const b=e.target.closest('button');
  if(!b||!live) return;
  const d=b.dataset;
+ if(d.ownerTab&&isOwner(actor)&&Object.hasOwn(ownerTabs,d.ownerTab)){
+   ownerTab=d.ownerTab;
+   renderActivity();
+   $('#activity').querySelector('[aria-pressed="true"]')?.focus({preventScroll:true});
+   return;
+ }
  if(d.page){
    if(!canSeePage(d.page)) return;
    page=d.page;
+   void poll();
    if(page==='settings') fillProfileForm();
    render();
    return;
@@ -874,20 +1056,15 @@ document.addEventListener('click',async e=>{
  }
 });
 document.addEventListener('change',e=>{
- if(isOwner(actor)&&['revenueStart','revenueEnd'].includes(e.target.id)){
-   const start=e.target.id==='revenueStart'?e.target.value:revenueStart;
-   const end=e.target.id==='revenueEnd'?e.target.value:revenueEnd;
-   const span=(Date.parse(end)-Date.parse(start))/86400000;
-   if(!(span>=0&&span<366)){
-     notify('Vyberte platné období nejvýše 366 dní.');
-     e.target.value=e.target.id==='revenueStart'?revenueStart:revenueEnd;
+ if(isOwner(actor)&&e.target.matches('[data-owner-filter]')&&Object.hasOwn(ownerFilters,e.target.id)){
+   const {id,value}=e.target;
+   if(!value||!e.target.validity.valid||(['date','month'].includes(e.target.type)&&!/^[1-9]\d{3}-/.test(value))){
+     e.target.value=ownerFilters[id];
      return;
    }
-   revenueStart=start;
-   revenueEnd=end;
+   ownerFilters[id]=value;
    renderActivity();
  }
- if(isOwner(actor)&&e.target.id==='revenueDriver'){revenueDriver=e.target.value;renderActivity();}
  if(e.target.id==='filter'){filter=e.target.value;render();}
  if(e.target.id==='reportDate'&&e.target.value){reportDate=e.target.value;render();}
 });
@@ -1220,13 +1397,21 @@ async function poll(){
  const generation=sessionGeneration;
  try{
    const data=await api('state');
-   if(live&&generation===sessionGeneration&&data.revision>revision) receive(data);
+   if(live&&generation===sessionGeneration&&data&&(data.actor!==actor||data.revision>revision)) receive(data);
  }catch(error){if(generation===sessionGeneration&&error.status===401) lockApp();}
  finally{polling=false;}
 }
 render();
 api('state').then(data=>{if(!sessionGeneration) receive(data);}).catch(()=>{});
 if('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(console.error);
-setInterval(poll,1000);
+let lastPoll=0;
+setInterval(()=>{
+ const now=Date.now();
+ const interval=can('driverRide')||page==='dispatch'?1000:3000;
+ if(!live||polling||pending||now-lastPoll<interval) return;
+ lastPoll=now;
+ void poll();
+},1000);
 setInterval(()=>{if(live&&page==='dispatch'){stats();renderMap();}},1000);
 setInterval(renderDriverMap,8000);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden) void poll();});
