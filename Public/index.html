@@ -7,6 +7,13 @@
 <section class="panel queuepanel"><div class="panelhead"><span class="headicon" data-icon="list"></span><div><h2>Zakázky</h2><p>Přiřazení řidičům</p></div><span class="count" id="queuecount"></span></div><div class="tabs"><button data-queue="waiting" class="active">Čekající</button><button data-queue="active">Probíhající</button></div><div id="queue"></div></section></div>
 <section id="history" hidden></section><section id="driver" hidden>
   <div id="driver-summary"></div>
+  <section class="panel driver-map-panel">
+    <div class="panelhead"><span class="headicon" data-icon="map"></span><div><h2>Mapa řidiče</h2><p id="driver-map-status"></p></div></div>
+    <div id="driver-map" role="group" aria-label="Poloha vozidla a zastávky aktuální zakázky">
+      <div class="map-tiles"></div><div class="map-markers"></div>
+      <div class="mapcredit">© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a></div>
+    </div>
+  </section>
   <section class="panel detail">
     <h2>Vlastní zakázka</h2>
     <p id="own-ride-status" hidden>Novou vlastní zakázku můžete vytvořit po dokončení aktuální jízdy.</p>

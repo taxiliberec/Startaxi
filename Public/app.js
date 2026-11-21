@@ -46,7 +46,7 @@ function receive(data){
  noticeCount=state.jobs.filter(j=>j.status==='done').length;
  if(jobsChanged||otherChanged||previous!==actor) render();
  else if(page==='dispatch'){stats();renderMap();}
- else if(page==='driver') stats();
+ else if(page==='driver'){stats();renderDriverMap();}
 }
 function lockApp(){
  sessionGeneration++; revision=-1; drivers=[]; state=null; live=false; stopGps();
@@ -179,7 +179,14 @@ function renderHistory(){
  $('#history').innerHTML='<div class="panel"><div class="panelhead"><span class="headicon">'+icon('chart')+'</span><div><h2>Dokončené jízdy</h2><p>'+fmtDate(reportDate)+'</p></div></div><div class="filters"><label>Datum<input type="date" id="reportDate" value="'+esc(reportDate)+'"></label>'+(managesFleet(actor)?'<label>Řidič<select id="filter"><option value="">Všichni řidiči</option>'+options+'</select></label>':'')+(canClose?'<button data-shift>Uzavřít směnu</button>':'')+'</div>'+rideTable(jobs)+'</div><div class="panel" style="margin-top:16px"><div class="panelhead"><span class="headicon">'+icon('calendar')+'</span><div><h2>Uzavřené směny</h2></div></div>'+ (shifts.map(s=>'<details class="shift"><summary>'+fmtDate(s.date)+' · '+esc(driverName(s.driver))+' · '+s.count+' jízd · '+cash(s.cents)+'</summary>'+rideTable(jobs.filter(j=>j.shift===s.id))+'</details>').join('')||'<p class="empty">Pro vybraný den nejsou uzavřené směny.</p>')+'</div>';
 }
 function navigate(address){
- return 'https://www.google.com/maps/dir/?api=1&travelmode=driving&destination='+encodeURIComponent(address);
+ return 'https://www.google.com/maps/dir/?api=1&travelmode=driving&dir_action=navigate&destination='+encodeURIComponent(address);
+}
+function driverNavigation(job){
+ const toDropoff=job.status==='onboard';
+ const point=toDropoff?job.target:job.pickupPoint;
+ const address=point?point.lat+','+point.lng:toDropoff?job.dropoff:job.pickup;
+ const label=toDropoff?'Navigovat na místo doručení':'Navigovat k zákazníkovi';
+ return '<a target="_blank" rel="noopener" href="'+esc(navigate(address))+'">'+label+'</a>';
 }
 function renderDriver(){
  const j=busy(state,actor);
@@ -188,34 +195,69 @@ function renderDriver(){
  const gpsStatus=gpsText||(fresh(pos)?'GPS přesnost ±'+Math.round(pos.accuracy)+' m':'Poloha se nesdílí.');
  $('#own-ride fieldset').disabled=Boolean(j);
  $('#own-ride-status').hidden=!j;
- $('#driver-summary').innerHTML='<div class="drivergrid"><div><section class="panel detail"><h2>Aktuální zakázka</h2>'+(j?'<p><b>#'+j.id+' · '+esc(j.name)+' · '+cash(j.cents)+'</b></p><p>'+statusText[j.status]+(j.scheduled?' · '+esc(j.scheduled.replace('T',' ')):'')+'</p>'+jobRoute(j)+(j.note?'<p>'+esc(j.note)+'</p>':'')+'<div class="actions">'+(j.status!=='assigned'?'<a target="_blank" rel="noopener" href="'+esc(navigate(j.status==='onboard'?(j.target?j.target.lat+','+j.target.lng:j.dropoff):(j.pickupPoint?j.pickupPoint.lat+','+j.pickupPoint.lng:j.pickup)))+'">Spustit navigaci</a>':'')+'<button class="primary" data-drive="'+action[0]+'" data-id="'+j.id+'">'+action[1]+'</button></div>':'<p>Čekáte na novou zakázku od dispečera.</p>')+'</section></div><div><section class="panel detail"><h2>Dostupnost</h2><div class="actions"><button data-availability aria-pressed="'+Boolean(state.occupied?.[actor])+'" '+(j?'disabled':'')+'>'+(state.occupied?.[actor]?'Nastavit jako volný':'Nastavit jako obsazený')+'</button></div></section><section class="panel detail"><h2>Sdílení polohy</h2><p>'+esc(gpsStatus)+'</p><div class="actions"><button data-gps>'+ (gps===null?'Zapnout GPS':'Zastavit GPS')+'</button></div></section><section class="panel detail"><h2>Dnešní jízdy</h2><div class="actions"><button data-page="history">Otevřít denní přehled</button></div></section></div></div>';
+ $('#driver-summary').innerHTML='<div class="drivergrid"><div><section class="panel detail"><h2>Aktuální zakázka</h2>'+(j?'<p><b>#'+j.id+' · '+esc(j.name)+' · '+cash(j.cents)+'</b></p><p>'+statusText[j.status]+(j.scheduled?' · '+esc(j.scheduled.replace('T',' ')):'')+'</p>'+jobRoute(j)+(j.note?'<p>'+esc(j.note)+'</p>':'')+'<div class="actions">'+(j.status!=='assigned'?driverNavigation(j):'')+'<button class="primary" data-drive="'+action[0]+'" data-id="'+j.id+'">'+action[1]+'</button></div>':'<p>Čekáte na novou zakázku od dispečera.</p>')+'</section></div><div><section class="panel detail"><h2>Dostupnost</h2><div class="actions"><button data-availability aria-pressed="'+Boolean(state.occupied?.[actor])+'" '+(j?'disabled':'')+'>'+(state.occupied?.[actor]?'Nastavit jako volný':'Nastavit jako obsazený')+'</button></div></section><section class="panel detail"><h2>Sdílení polohy</h2><p>'+esc(gpsStatus)+'</p><div class="actions"><button data-gps>'+ (gps===null?'Zapnout GPS':'Zastavit GPS')+'</button></div></section><section class="panel detail"><h2>Dnešní jízdy</h2><div class="actions"><button data-page="history">Otevřít denní přehled</button></div></section></div></div>';
+ renderDriverMap();
 }
 function fresh(p){return Boolean(p&&(p.demo||Date.now()-p.time<45000));}
 const center={lat:50.7695,lng:15.0514};
-let zoom=13, offset={x:0,y:0}, tileKey='';
-function project(p){
- const size=256*2**zoom, sine=Math.sin(p.lat*Math.PI/180);
+let zoom=13, offset={x:0,y:0};
+function project(p,level=zoom){
+ const size=256*2**level, sine=Math.sin(Math.max(-85,Math.min(85,p.lat))*Math.PI/180);
  return {x:(p.lng+180)/360*size,y:(.5-Math.log((1+sine)/(1-sine))/(4*Math.PI))*size};
+}
+function renderTiles(layer,level,x,y,w,h){
+ const key=[level,x,y,w,h].join();
+ if(layer.dataset.view===key) return;
+ layer.dataset.view=key;
+ const count=2**level;
+ let tiles='';
+ for(let tx=Math.floor(x/256);tx<=Math.floor((x+w)/256);tx++) for(let ty=Math.floor(y/256);ty<=Math.floor((y+h)/256);ty++){
+   if(ty<0||ty>=count) continue;
+   const wrap=((tx%count)+count)%count;
+   tiles+='<img alt="" draggable="false" style="left:'+(tx*256-x)+'px;top:'+(ty*256-y)+'px" src="https://tile.openstreetmap.org/'+level+'/'+wrap+'/'+ty+'.png">';
+ }
+ layer.innerHTML='<div class="mapfallback"><small>Mapový podklad se načítá</small></div>'+tiles;
+ layer.querySelectorAll('img').forEach(img=>img.addEventListener('error',()=>{
+   img.style.display='none';
+   layer.querySelector('.mapfallback small').textContent='Mapový podklad je nedostupný';
+ }));
+}
+function renderDriverMap(){
+ const map=$('#driver-map'), w=map.clientWidth, h=map.clientHeight;
+ if(!live||page!=='driver'||!w||!h) return;
+ const j=busy(state,actor);
+ const position=state.positions[actor];
+ const stops=[
+   [fresh(position)?position:null,'taxi','green','Vaše poloha'],
+   [j?.status==='onboard'?null:j?.pickupPoint,'person','pickup-marker','Vyzvednutí'],
+   [j?.target,'flag','gray','Doručení']
+ ].filter(([point])=>point);
+ const messages=stops.map(([, , ,label])=>label);
+ if(!fresh(position)) messages.push('GPS poloha není dostupná');
+ if(j&&(!j.target||(j.status!=='onboard'&&!j.pickupPoint))) messages.push('U některé adresy chybí bod na mapě');
+ $('#driver-map-status').textContent=messages.join(' · ');
+
+ let level=stops.length?16:13, points, bounds;
+ do {
+   points=stops.map(([point])=>project(point,level));
+   const xs=points.map(point=>point.x), ys=points.map(point=>point.y);
+   bounds=points.length?[Math.min(...xs),Math.max(...xs),Math.min(...ys),Math.max(...ys)]:null;
+   if(!bounds||level===0||(bounds[1]-bounds[0]<=w-80&&bounds[3]-bounds[2]<=h-100)) break;
+   level--;
+ } while(true);
+ const middle=bounds?{x:(bounds[0]+bounds[1])/2,y:(bounds[2]+bounds[3])/2}:project(center,level);
+ const x=Math.round(middle.x-w/2), y=Math.round(middle.y-h/2);
+ renderTiles(map.querySelector('.map-tiles'),level,x,y,w,h);
+ map.querySelector('.map-markers').innerHTML=stops.map(([,symbol,color,label],index)=>{
+   const point=points[index];
+   return '<span class="marker stop-marker '+color+'" style="left:'+(point.x-x)+'px;top:'+(point.y-y)+'px" role="img" aria-label="'+label+'">'+icon(symbol)+'<small>'+label+'</small></span>';
+ }).join('');
 }
 function renderMap(){
  const map=$('#map'), w=map.clientWidth,h=map.clientHeight;
  if(!live||!w||!h) return;
  const c=project(center), x=c.x-w/2-offset.x,y=c.y-h/2-offset.y;
- const key=[zoom,w,h,offset.x,offset.y].join();
- if(key!==tileKey){
-   tileKey=key;
-   let tiles='';
-   for(let tx=Math.floor(x/256);tx<=Math.floor((x+w)/256);tx++) for(let ty=Math.floor(y/256);ty<=Math.floor((y+h)/256);ty++){
-     if(ty<0||ty>=2**zoom) continue;
-     const wrap=(tx+2**zoom)%2**zoom;
-     tiles+='<img alt="" draggable="false" style="left:'+(tx*256-x)+'px;top:'+(ty*256-y)+'px" src="https://tile.openstreetmap.org/'+zoom+'/'+wrap+'/'+ty+'.png">';
-   }
-   $('#tiles').innerHTML='<div class="mapfallback"><strong>Liberec</strong><small>Podklad se načítá</small></div>'+tiles;
-   $('#tiles').querySelectorAll('img').forEach(img=>img.addEventListener('error',()=>{
-     img.style.display='none';
-     $('#tiles .mapfallback small').textContent='Mapový podklad je nedostupný';
-   }));
- }
+ renderTiles($('#tiles'),zoom,x,y,w,h);
  $('#markers').innerHTML=drivers.map(d=>{
    const p=state.positions[d.id];
    if(!fresh(p)) return '';
@@ -253,6 +295,7 @@ $('#map').addEventListener('pointermove',e=>{
 });
 for(const event of ['pointerup','pointercancel']) $('#map').addEventListener(event,()=>drag=null);
 new ResizeObserver(renderMap).observe($('#map'));
+new ResizeObserver(renderDriverMap).observe($('#driver-map'));
 $('#today').textContent=new Intl.DateTimeFormat('cs-CZ',{dateStyle:'full',timeZone:'Europe/Prague'}).format(new Date());
 const selectedAddresses=new WeakMap();
 for(const form of [$('#booking'),$('#own-ride'),$('#job-edit-form')]){
@@ -521,3 +564,4 @@ api('state').then(data=>{if(!sessionGeneration) receive(data);}).catch(()=>{});
 if('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(console.error);
 setInterval(poll,1000);
 setInterval(()=>{if(live&&page==='dispatch'){stats();renderMap();}},1000);
+setInterval(renderDriverMap,8000);

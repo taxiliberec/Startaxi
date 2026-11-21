@@ -50,3 +50,10 @@
 .job-menu button { text-align:left; border:0; }
 #job-edit-form fieldset { border:0; margin:0; padding:0; min-width:0; }
 #job-edit-form fieldset:not([hidden]) { display:grid; gap:10px; }
+
+.driver-map-panel{margin-bottom:16px}
+#driver-map{position:relative;overflow:hidden;height:clamp(260px,45vh,400px);background:#e6ebea}
+#driver-map .map-tiles,#driver-map .map-markers{position:absolute;inset:0;pointer-events:none}
+#driver-map .map-tiles img{position:absolute;width:256px;height:256px}
+#driver-map .marker{pointer-events:none}
+#driver-map .marker small{top:32px}
