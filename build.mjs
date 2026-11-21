@@ -3,7 +3,7 @@ import {access,readFile,writeFile,mkdir,rm} from 'node:fs/promises';
 const files={
   'index.html':'text/html','style.css':'text/css','app.js':'text/javascript','model.js':'text/javascript',
   'manifest.webmanifest':'application/manifest+json','sw.js':'text/javascript',
-  'star-taxi-192.png':'image/png','star-taxi-512.png':'image/png'
+  'taximetr.svg':'image/svg+xml','taximetr-192.png':'image/png','taximetr-512.png':'image/png'
 };
 const publicDir=await access('Public').then(()=> 'Public',()=> 'public');
 const assets=Object.fromEntries(await Promise.all(Object.entries(files).map(async ([name,type])=>{
