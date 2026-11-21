@@ -7,13 +7,52 @@ export const drivers = [
   {id:'06',name:'Ondřej Svoboda',lat:50.7789,lng:15.0249}
 ];
 export const isOwner = actor => actor === 'owner' || /^owner-[0-9a-f-]{36}$/.test(actor);
-export const managesFleet = actor => actor === 'dispatch' || isOwner(actor);
+export const employeeRole = (state,id) => state.employees?.[id]?.role ?? (id==='dispatch'?'dispatcher':'driver');
+export const permissionLabels = {
+  dispatchJobs:'Zobrazit zakázky dispečinku',
+  fleetMap:'Zobrazit mapu vozidel',
+  history:'Zobrazit denní přehled a tržby',
+  create:'Vytvářet zakázky dispečinku',
+  assign:'Přiřazovat zakázky řidičům',
+  edit:'Upravovat zakázky',
+  cancel:'Rušit zakázky',
+  driverRide:'Zobrazit a odbavovat přidělenou jízdu',
+  ownRide:'Zapisovat vlastní jízdy',
+  availability:'Měnit dostupnost vozidla',
+  gps:'Sdílet polohu vozidla',
+  closeShift:'Uzavírat směny'
+};
+const driverPermissions=['driverRide','ownRide','availability','gps','closeShift'];
+const dispatcherPermissions=['dispatchJobs','fleetMap','history','create','assign','edit','cancel'];
+export const availablePermissions = role => Object.keys(permissionLabels).filter(key=>role==='driver'||!driverPermissions.includes(key));
+export function defaultPermissions(role){
+  return role==='dispatcher' ? [...dispatcherPermissions] : ['history',...driverPermissions];
+}
+export function permissionsFor(state,id){
+  if(isOwner(id)) return dispatcherPermissions;
+  const configured=state.employeePermissions?.[id];
+  const role=employeeRole(state,id);
+  if(!Array.isArray(configured)) return defaultPermissions(role);
+  return availablePermissions(role).filter(key=>configured.includes(key));
+}
+export function allows(permissions,key){
+  const prerequisites={
+    assign:['dispatchJobs','fleetMap'],edit:['dispatchJobs'],cancel:['dispatchJobs'],
+    ownRide:['driverRide'],closeShift:['history']
+  };
+  return permissions.includes(key)&&(prerequisites[key]??[]).every(required=>permissions.includes(required));
+}
+export const actionPermissions = Object.freeze({
+  create:'create',assign:'assign',editPickupTime:'edit',editJob:'edit',cancelJob:'cancel',
+  createOwn:'ownRide',accept:'driverRide',pickup:'driverRide',complete:'driverRide',
+  gps:'gps',availability:'availability',close:'closeShift'
+});
 export const fleet = state => [
   ...drivers.map(driver=>{
     const profile=state.profiles?.[driver.id];
     return profile?{...driver,name:profile.firstName+' '+profile.lastName}:driver;
   }),
-  ...Object.values(state.employees||{}).map(({id,firstName,lastName})=>({id,name:firstName+' '+lastName}))
+  ...Object.values(state.employees||{}).filter(employee=>employeeRole(state,employee.id)==='driver').map(({id,firstName,lastName})=>({id,name:firstName+' '+lastName}))
 ];
 const dayFormat = new Intl.DateTimeFormat('sv-SE',{timeZone:'Europe/Prague'});
 export const day = (t=Date.now()) => dayFormat.format(t);
@@ -38,13 +77,16 @@ export function demoState(){
 }
 function requireThat(ok,message){ if(!ok) throw Error(message); }
 export function change(s,actor,a,now=Date.now()){
+  if(Object.hasOwn(actionPermissions,a.type)){
+    requireThat(allows(permissionsFor(s,actor),actionPermissions[a.type]),'Přístup zamítnut.');
+  }
   const job=s.jobs.find(j=>j.id===a.id);
   const own=job && job.driver===actor;
   switch(a.type){
     case 'createOwn':
     case 'create': {
       const ownRide=a.type==='createOwn';
-      requireThat(ownRide ? fleet(s).some(d=>d.id===actor) : managesFleet(actor),'Přístup zamítnut.');
+      requireThat(!ownRide||fleet(s).some(d=>d.id===actor),'Přístup zamítnut.');
       if(ownRide){
         requireThat(!busy(s,actor),'Nejdříve dokončete aktuální zakázku.');
         requireThat([a.firstName,a.lastName].every(v=>typeof v==='string'&&v.trim()&&v.length<=60),'Vyplňte jméno a příjmení.');
@@ -60,7 +102,7 @@ export function change(s,actor,a,now=Date.now()){
     case 'cancelJob':
     case 'editPickupTime':
     case 'editJob': {
-      requireThat(managesFleet(actor)&&job&&['waiting','assigned','accepted','onboard'].includes(job.status),'Zakázku už nelze upravit.');
+      requireThat(job&&['waiting','assigned','accepted','onboard'].includes(job.status),'Zakázku už nelze upravit.');
       if(a.type==='cancelJob'){
         Object.assign(job,{status:'cancelled',cancelled:now});
       }else if(a.type==='editPickupTime'){
@@ -84,7 +126,7 @@ export function change(s,actor,a,now=Date.now()){
       else delete s.occupied[actor];
       break;
     case 'assign':
-      requireThat(managesFleet(actor)&&job?.status==='waiting'&&fleet(s).some(d=>d.id===a.driver)&&!busy(s,a.driver)&&!s.occupied?.[a.driver],'Řidič nebo zakázka už nejsou k dispozici.');
+      requireThat(job?.status==='waiting'&&fleet(s).some(d=>d.id===a.driver)&&allows(permissionsFor(s,a.driver),'driverRide')&&!busy(s,a.driver)&&!s.occupied?.[a.driver],'Řidič nebo zakázka už nejsou k dispozici.');
       Object.assign(job,{driver:a.driver,status:'assigned'});
       break;
     case 'accept':

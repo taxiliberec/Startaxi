@@ -1,4 +1,4 @@
-import {isOwner,managesFleet,day,busy,meters} from './model.js';
+import {isOwner,allows,availablePermissions,defaultPermissions,permissionLabels,day,busy,meters} from './model.js';
 const $=sel=>document.querySelector(sel);
 const icons={
  person:'<circle cx="12" cy="5" r="2"/><path d="M5 10h14m-7 0v5m0 0-4 6m4-6 4 6"/>',
@@ -17,7 +17,15 @@ const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&
 const cash=c=>new Intl.NumberFormat('cs-CZ',{style:'currency',currency:'CZK',maximumFractionDigits:c%100?2:0}).format(c/100);
 const fmtDate=d=>new Intl.DateTimeFormat('cs-CZ',{dateStyle:'long',timeZone:'Europe/Prague'}).format(new Date(d+'T12:00:00Z'));
 const time=t=>new Intl.DateTimeFormat('cs-CZ',{timeStyle:'short',timeZone:'Europe/Prague'}).format(t);
-let drivers=[], profile=null, revision=-1, sessionGeneration=0;
+let drivers=[], profile=null, revision=-1, sessionGeneration=0, role='', permissions=[];
+const can=key=>allows(permissions,key);
+const driverPage=()=>['driverRide','availability','gps'].some(can);
+const canSeePage=key=>({
+ dispatch:['dispatchJobs','fleetMap','create'].some(can),driver:driverPage(),
+ history:can('history'),activity:isOwner(actor),settings:true
+})[key]===true;
+const roleLabel=value=>({owner:'Majitel firmy',dispatcher:'Dispečer',driver:'Řidič'})[value];
+const fleetHistory=()=>role!=='driver';
 const driverName=id=>drivers.find(d=>d.id===id)?.name??'';
 const statusText={waiting:'Čeká',assigned:'Čeká na přijetí',accepted:'K vyzvednutí',onboard:'Se zákazníkem',done:'Dokončeno'};
 let state=null, actor='dispatch', live=false, page='dispatch', queue='waiting', selected='', filter='', reportDate=day(), gps=null, gpsHeartbeat=null, gpsText='', lastGps=0, pending=false, incoming=null, noticeCount=0;
@@ -38,20 +46,33 @@ function receive(data){
  const jobsChanged=!wasLive||JSON.stringify(state.jobs)!==JSON.stringify(data.state.jobs);
  const otherChanged=!wasLive||JSON.stringify([state.employees,state.activity,state.shifts,state.occupied,state.owners])!==JSON.stringify([data.state.employees,data.state.activity,data.state.shifts,data.state.occupied,data.state.owners]);
  const previous=actor;
+ const permissionsChanged=JSON.stringify(permissions)!==JSON.stringify(data.permissions);
+ role=data.role; permissions=data.permissions;
+ if(!can('gps')&&gps!==null) stopGps();
+ if(permissionsChanged){
+   selected='';
+   for(const id of ['job-editor','shiftbox']) if($('#'+id).open) $('#'+id).close();
+ }
  live=true; actor=data.actor; state=data.state;
- if(!wasLive||actor!==previous){page=isOwner(actor)?'activity':managesFleet(actor)?'dispatch':'driver'; selected=''; incoming=null;}
- const active=managesFleet(actor)?null:busy(state,actor);
+ if(!wasLive||actor!==previous) loadMapPreferences();
+ if(!wasLive||actor!==previous||!canSeePage(page)){
+   page=['activity','dispatch','driver','history','settings'].find(canSeePage);
+   if(page==='settings') fillProfileForm();
+   selected=''; incoming=null;
+ }
+ const active=can('driverRide')?busy(state,actor):null;
  if(active?.status==='assigned'&&incoming!==active.id){incoming=active.id; notify('Nová zakázka č. '+active.id); navigator.vibrate?.([150,80,150]);}
- if(managesFleet(actor)&&data.state.jobs.filter(j=>j.status==='done').length>noticeCount&&wasLive) notify('Zakázka dokončena.');
+ if(fleetHistory()&&can('history')&&data.state.jobs.filter(j=>j.status==='done').length>noticeCount&&wasLive) notify('Zakázka dokončena.');
  noticeCount=state.jobs.filter(j=>j.status==='done').length;
- if(jobsChanged||otherChanged||previous!==actor) render();
+ if(jobsChanged||otherChanged||permissionsChanged||previous!==actor) render();
  else if(page==='dispatch'){stats();renderMap();}
  else if(page==='driver'){stats();renderDriverMap();}
 }
 function lockApp(){
  sessionGeneration++; revision=-1; drivers=[]; profile=null; state=null; live=false; stopGps();
- for(const form of [$('#booking'),$('#own-ride'),$('#profile-form'),$('#owner-form')]) form.reset();
+ for(const form of [$('#booking'),$('#own-ride'),$('#profile-form'),$('#owner-form'),$('#employee-form')]) form.reset();
  for(const dialog of document.querySelectorAll('dialog[open]')) dialog.close();
+ fillDefaultPermissions();
  render();
 }
 async function perform(action,quiet=false){
@@ -71,20 +92,21 @@ async function perform(action,quiet=false){
 }
 const occupied=id=>Boolean(busy(state,id)||state.occupied?.[id]);
 function stats(){
- const isDispatch=managesFleet(actor);
+ const isDispatch=fleetHistory()||page==='dispatch';
  const jobs=state.jobs.filter(j=>j.status==='done'&&day(j.done)===(page==='history'?reportDate:day())&&(isDispatch?(!filter||page!=='history'||j.driver===filter):j.driver===actor));
- const values=isDispatch?[
-   ['taxi','mint','Volná vozidla',drivers.filter(d=>!occupied(d.id)&&fresh(state.positions[d.id])).length],
-   ['clock','amber','Čekající zakázky',state.jobs.filter(j=>j.status==='waiting').length],
-   ['list','','Probíhající jízdy',state.jobs.filter(j=>busy(state,j.driver)?.id===j.id).length],
-   ['money','violet',page==='history'?'Tržby za vybraný den':'Dnešní tržby',cash(jobs.reduce((t,j)=>t+j.cents,0))]
+ const values=(isDispatch?[
+   ['fleetMap','taxi','mint','Volná vozidla',drivers.filter(d=>!occupied(d.id)&&fresh(state.positions[d.id])).length],
+   ['dispatchJobs','clock','amber','Čekající zakázky',state.jobs.filter(j=>j.status==='waiting').length],
+   ['dispatchJobs','list','','Probíhající jízdy',state.jobs.filter(j=>busy(state,j.driver)?.id===j.id).length],
+   ['history','money','violet',page==='history'?'Tržby za vybraný den':'Dnešní tržby',cash(jobs.reduce((t,j)=>t+j.cents,0))]
  ]:[
-   ['taxi','mint','Stav vozidla',!fresh(state.positions[actor])?'Neaktivní':occupied(actor)?'Obsazený':'Volný'],
-   ['list','','Dokončené jízdy',jobs.length],
-   ['money','violet','Tržby za den',cash(jobs.reduce((t,j)=>t+j.cents,0))],
-   ['calendar','amber','Uzavřené směny',state.shifts.filter(s=>s.driver===actor&&s.date===(page==='history'?reportDate:day())).length]
- ];
- $('#stats').innerHTML=values.map(([i,c,label,v])=>'<div class="stat"><span class="sticon '+c+'">'+icon(i)+'</span><div><p>'+label+'</p><strong>'+v+'</strong></div></div>').join('');
+   ['gps','taxi','mint','Stav vozidla',!fresh(state.positions[actor])?'Neaktivní':occupied(actor)?'Obsazený':'Volný'],
+   ['history','list','','Dokončené jízdy',jobs.length],
+   ['history','money','violet','Tržby za den',cash(jobs.reduce((t,j)=>t+j.cents,0))],
+   ['history','calendar','amber','Uzavřené směny',state.shifts.filter(s=>s.driver===actor&&s.date===(page==='history'?reportDate:day())).length]
+ ]).filter(([permission])=>can(permission));
+ $('#stats').hidden=page==='settings'||!values.length;
+ $('#stats').innerHTML=values.map(([,i,c,label,v])=>'<div class="stat"><span class="sticon '+c+'">'+icon(i)+'</span><div><p>'+label+'</p><strong>'+v+'</strong></div></div>').join('');
 }
 function render(){
  $('#loginbox').hidden=live;
@@ -94,26 +116,26 @@ function render(){
  $('#dispatch').hidden=page!=='dispatch';
  $('#history').hidden=page!=='history';
  $('#driver').hidden=page!=='driver';
- $('#employees').hidden=page!=='employees';
  $('#activity').hidden=page!=='activity';
  $('#settings').hidden=page!=='settings';
- $('#stats').hidden=page==='settings';
- if(page==='settings') renderOwners();
+ if(page==='settings'){renderOwners();renderUserSettings();renderMapSettings();}
+ document.querySelectorAll('[data-permission]').forEach(el=>el.hidden=!can(el.dataset.permission));
+ $('#driver-map-panel').hidden=!can('gps')&&!can('driverRide');
+ $('#dispatch').setAttribute('data-panels',['create','fleetMap','dispatchJobs'].filter(can).length);
  document.querySelectorAll('[data-page]').forEach(b=>{
-   b.hidden=(b.dataset.page==='employees'&&(!live||!managesFleet(actor)))||(b.dataset.page==='activity'&&!isOwner(actor))||(b.dataset.page==='dispatch'&&!managesFleet(actor))||(b.dataset.page==='driver'&&managesFleet(actor));
+   b.hidden=!canSeePage(b.dataset.page);
    b.classList.toggle('active',page===b.dataset.page);
  });
- $('#login').textContent=!live?'Přihlásit se':isOwner(actor)?'M':managesFleet(actor)?'D':driverName(actor).slice(0,1);
+ $('#login').textContent=!live?'Přihlásit se':(profile.firstName||roleLabel(role)).slice(0,1);
  $('#login').setAttribute('aria-label',live?'Odhlásit se':'Přihlásit se');
- $('#connection').textContent=live?(isOwner(actor)?'Majitel firmy':managesFleet(actor)?'Dispečer':'Řidič'):'Ukázková data';
+ $('#connection').textContent=roleLabel(role);
  $('#mapmode').textContent=live?'ŽIVĚ':'UKÁZKA';
- $('#title').textContent={dispatch:'Dispečink',driver:'Přehled řidiče',history:'Denní přehled',employees:'Řidiči',activity:'Majitel firmy',settings:'Nastavení'}[page];
- $('#subtitle').textContent=page==='dispatch'?'Spravujte zakázky a sledujte polohu vozidel v Liberci.':page==='driver'?driverName(actor)+' · Vozidlo '+actor:page==='employees'?'Založte zaměstnancům přístup do aplikace.':page==='activity'?'Přehled změn zakázek, směn a účtů řidičů.':page==='settings'?'Profil a přihlašovací údaje':'Dokončené jízdy, tržby a uzávěrky směn.';
+ $('#title').textContent={dispatch:'Dispečink',driver:'Přehled řidiče',history:'Denní přehled',activity:'Majitel firmy',settings:'Nastavení'}[page];
+ $('#subtitle').textContent=page==='dispatch'?'Spravujte zakázky a sledujte polohu vozidel v Liberci.':page==='driver'?driverName(actor)+' · Vozidlo '+actor:page==='activity'?'Přehled změn zakázek, směn a účtů řidičů.':page==='settings'?'Profil a nastavení aplikace':'Dokončené jízdy, tržby a uzávěrky směn.';
  stats();
  if(page==='dispatch'){renderQueue();renderMap();}
  if(page==='history') renderHistory();
  if(page==='driver') renderDriver();
- if(page==='employees') $('#employee-list').innerHTML=(state.employees||[]).map(e=>'<p class="employee"><strong>'+esc(e.firstName+' '+e.lastName)+'</strong><span>'+esc(e.username)+' · Taxi '+esc(e.id)+'</span></p>').join('')||'<p class="empty">Zatím nejsou vytvořené žádné účty.</p>';
  if(page==='activity') renderActivity();
 }
 const offsetDate=(date,days)=>new Date(Date.parse(date+'T00:00:00Z')+days*86400000).toISOString().slice(0,10);
@@ -150,36 +172,42 @@ function renderRevenue(){
    '<p>Srovnání s obdobím '+fmtDate(previousStart)+' až '+fmtDate(previousEnd)+'.</p><div class="scroll"><table><thead><tr><th>Datum</th><th>Vybrané období</th><th>Předchozí období</th></tr></thead><tbody>'+chart+'</tbody></table></div></section>';
 }
 function renderActivity(){
- const labels={ownerCreated:'Vytvořen účet majitele',driver:'Vytvořen účet řidiče',create:'Vytvořena zakázka',createOwn:'Vytvořena vlastní zakázka',cancelJob:'Zakázka zrušena',editPickupTime:'Upraven čas vyzvednutí',editJob:'Upraveny údaje zakázky',assign:'Přiřazena zakázka',accept:'Přijata zakázka',pickup:'Vyzvednut zákazník',complete:'Dokončena jízda',close:'Uzavřena směna'};
+ const labels={employeeCreated:'Vytvořen účet zaměstnance',employeePermissions:'Změněna oprávnění zaměstnance',ownerCreated:'Vytvořen účet majitele',driver:'Vytvořen účet řidiče',create:'Vytvořena zakázka',createOwn:'Vytvořena vlastní zakázka',cancelJob:'Zakázka zrušena',editPickupTime:'Upraven čas vyzvednutí',editJob:'Upraveny údaje zakázky',assign:'Přiřazena zakázka',accept:'Přijata zakázka',pickup:'Vyzvednut zákazník',complete:'Dokončena jízda',close:'Uzavřena směna'};
  const formatter=new Intl.DateTimeFormat('cs-CZ',{dateStyle:'short',timeStyle:'medium',timeZone:'Europe/Prague'});
  const activity=state.activity||[];
- const view=activity.map(e=>'<tr><td>'+formatter.format(e.time)+'</td><td>'+esc(isOwner(e.actor)?(state.owners?.find(owner=>owner.id===e.actor)?.firstName||'Majitel'):e.actor==='dispatch'?'Dispečer':driverName(e.actor))+'</td><td>'+esc(labels[e.type])+'</td><td>'+esc(e.detail)+'</td></tr>').join('');
+ const view=activity.map(e=>'<tr><td>'+formatter.format(e.time)+'</td><td>'+esc(isOwner(e.actor)?(state.owners?.find(owner=>owner.id===e.actor)?.firstName||'Majitel'):(state.employees?.find(employee=>employee.id===e.actor)?.firstName||driverName(e.actor)||(e.actor==='dispatch'?'Dispečer':e.actor)))+'</td><td>'+esc(labels[e.type])+'</td><td>'+esc(e.detail)+'</td></tr>').join('');
  $('#activity').innerHTML=renderRevenue()+'<div class="panel detail"><h2>Historie provozu</h2>'+(view?'<div class="scroll"><table><thead><tr><th>Čas</th><th>Uživatel</th><th>Událost</th><th>ID nebo datum směny</th></tr></thead><tbody>'+view+'</tbody></table></div>':'<p class="empty">Nové události se zobrazí zde.</p>')+'</div>';
 }
 function jobRoute(j){
  return '<div class="route"><span>'+icon('pin')+esc(j.pickup)+'</span><span>'+icon('flag')+esc(j.dropoff)+'</span></div>';
 }
 function renderQueue(){
+ if(!can('dispatchJobs')) return;
  const waiting=state.jobs.filter(j=>j.status==='waiting');
  const active=state.jobs.filter(j=>['assigned','accepted','onboard'].includes(j.status));
  const jobs=queue==='waiting'?waiting:active;
  if(selected&&(occupied(selected)||!fresh(state.positions[selected]))) selected='';
  $('#queuecount').textContent=jobs.length;
+ $('#maphint').hidden=!can('assign');
  document.querySelectorAll('[data-queue]').forEach(b=>b.classList.toggle('active',b.dataset.queue===queue));
  $('#maphint').textContent=selected?driverName(selected)+' · vyberte zakázku':'Vyberte volné vozidlo';
- $('#queue').innerHTML=jobs.map(j=>'<div class="job-card"><details class="job-menu"><summary aria-label="Možnosti zakázky '+j.id+'">⋯</summary><div><button type="button" data-job-edit="cancelJob" data-id="'+j.id+'">Zrušit zakázku</button><button type="button" data-job-edit="editPickupTime" data-id="'+j.id+'">Upravit čas vyzvednutí</button><button type="button" data-job-edit="editJob" data-id="'+j.id+'">Upravit údaje zakázky</button></div></details><button class="job" data-job="'+j.id+'" '+(j.status!=='waiting'?'disabled':'')+'><div class="jobtop"><b>'+esc(j.name)+'</b><span class="badge">'+statusText[j.status]+'</span></div>'+jobRoute(j)+'<div class="jobfoot"><span>'+esc([j.driver?driverName(j.driver):'',j.scheduled?j.scheduled.replace('T',' · '):''].filter(Boolean).join(' · ')||'Co nejdříve')+'</span><strong>'+cash(j.cents)+'</strong></div></button></div>').join('')||'<p class="empty">Žádné zakázky</p>';
+ $('#queue').innerHTML=jobs.map(j=>'<div class="job-card"><details class="job-menu"><summary aria-label="Možnosti zakázky '+j.id+'">⋯</summary><div><button type="button" data-job-edit="cancelJob" data-id="'+j.id+'">Zrušit zakázku</button><button type="button" data-job-edit="editPickupTime" data-id="'+j.id+'">Upravit čas vyzvednutí</button><button type="button" data-job-edit="editJob" data-id="'+j.id+'">Upravit údaje zakázky</button></div></details><button class="job" data-job="'+j.id+'" '+(j.status!=='waiting'||!can('assign')?'disabled':'')+'><div class="jobtop"><b>'+esc(j.name)+'</b><span class="badge">'+statusText[j.status]+'</span></div>'+jobRoute(j)+'<div class="jobfoot"><span>'+esc([j.driver?driverName(j.driver):'',j.scheduled?j.scheduled.replace('T',' · '):''].filter(Boolean).join(' · ')||'Co nejdříve')+'</span><strong>'+cash(j.cents)+'</strong></div></button></div>').join('')||'<p class="empty">Žádné zakázky</p>';
+ $('#queue').querySelectorAll('.job-menu').forEach(menu=>{
+   menu.hidden=!can('edit')&&!can('cancel');
+   menu.querySelectorAll('[data-job-edit]').forEach(button=>button.hidden=!can(button.dataset.jobEdit==='cancelJob'?'cancel':'edit'));
+ });
 }
 function rideTable(jobs){
  if(!jobs.length) return '<p class="empty">V tomto dni nejsou dokončené jízdy.</p>';
- return '<div class="scroll"><table><thead><tr><th>Zakázka</th><th>Zákazník</th><th>Trasa</th>'+(managesFleet(actor)?'<th>Řidič</th>':'')+'<th>Dokončeno</th><th>Cena</th></tr></thead><tbody>'+jobs.map(j=>'<tr><td>#'+j.id+'</td><td>'+esc(j.name)+'</td><td>'+esc(j.pickup)+' / '+esc(j.dropoff)+'</td>'+(managesFleet(actor)?'<td>'+esc(driverName(j.driver))+'</td>':'')+'<td>'+time(j.done)+'</td><td><b>'+cash(j.cents)+'</b></td></tr>').join('')+'</tbody></table></div>';
+ return '<div class="scroll"><table><thead><tr><th>Zakázka</th><th>Zákazník</th><th>Trasa</th>'+(fleetHistory()?'<th>Řidič</th>':'')+'<th>Dokončeno</th><th>Cena</th></tr></thead><tbody>'+jobs.map(j=>'<tr><td>#'+j.id+'</td><td>'+esc(j.name)+'</td><td>'+esc(j.pickup)+' / '+esc(j.dropoff)+'</td>'+(fleetHistory()?'<td>'+esc(driverName(j.driver))+'</td>':'')+'<td>'+time(j.done)+'</td><td><b>'+cash(j.cents)+'</b></td></tr>').join('')+'</tbody></table></div>';
 }
 function renderHistory(){
  const options=drivers.map(d=>'<option value="'+d.id+'" '+(d.id===filter?'selected':'')+'>'+esc(d.name)+'</option>').join('');
- const visible=id=>managesFleet(actor)?!filter||filter===id:actor===id;
+ const visible=id=>fleetHistory()?!filter||filter===id:actor===id;
  const jobs=state.jobs.filter(j=>j.status==='done'&&day(j.done)===reportDate&&visible(j.driver)).sort((a,b)=>b.done-a.done);
  const shifts=state.shifts.filter(s=>s.date===reportDate&&visible(s.driver));
- const canClose=!managesFleet(actor)&&jobs.some(j=>!j.shift)&&!busy(state,actor);
- $('#history').innerHTML='<div class="panel"><div class="panelhead"><span class="headicon">'+icon('chart')+'</span><div><h2>Dokončené jízdy</h2><p>'+fmtDate(reportDate)+'</p></div></div><div class="filters"><label>Datum<input type="date" id="reportDate" value="'+esc(reportDate)+'"></label>'+(managesFleet(actor)?'<label>Řidič<select id="filter"><option value="">Všichni řidiči</option>'+options+'</select></label>':'')+(canClose?'<button data-shift>Uzavřít směnu</button>':'')+'</div>'+rideTable(jobs)+'</div><div class="panel" style="margin-top:16px"><div class="panelhead"><span class="headicon">'+icon('calendar')+'</span><div><h2>Uzavřené směny</h2></div></div>'+ (shifts.map(s=>'<details class="shift"><summary>'+fmtDate(s.date)+' · '+esc(driverName(s.driver))+' · '+s.count+' jízd · '+cash(s.cents)+'</summary>'+rideTable(jobs.filter(j=>j.shift===s.id))+'</details>').join('')||'<p class="empty">Pro vybraný den nejsou uzavřené směny.</p>')+'</div>';
+ const canClose=can('closeShift')&&jobs.some(j=>!j.shift)&&!busy(state,actor);
+ $('#history').innerHTML='<div class="panel"><div class="panelhead"><span class="headicon">'+icon('chart')+'</span><div><h2>Dokončené jízdy</h2><p>'+fmtDate(reportDate)+'</p></div></div><div class="filters"><label>Datum<input type="date" id="reportDate" value="'+esc(reportDate)+'"></label>'+(fleetHistory()?'<label>Řidič<select id="filter"><option value="">Všichni řidiči</option>'+options+'</select></label>':'')+(canClose?'<button data-shift>Uzavřít směnu</button>':'')+'</div>'+rideTable(jobs)+'</div><div class="panel" style="margin-top:16px"><div class="panelhead"><span class="headicon">'+icon('calendar')+'</span><div><h2>Uzavřené směny</h2></div></div>'+ (shifts.map(s=>'<details class="shift"><summary>'+fmtDate(s.date)+' · '+esc(driverName(s.driver))+' · '+s.count+' jízd · '+cash(s.cents)+'</summary>'+rideTable(jobs.filter(j=>j.shift===s.id))+'</details>').join('')||'<p class="empty">Pro vybraný den nejsou uzavřené směny.</p>')+'</div>';
 }
 function navigate(address){
  return 'https://www.google.com/maps/dir/?api=1&travelmode=driving&dir_action=navigate&destination='+encodeURIComponent(address);
@@ -199,6 +227,11 @@ function renderDriver(){
  $('#own-ride fieldset').disabled=Boolean(j);
  $('#own-ride-status').hidden=!j;
  $('#driver-summary').innerHTML='<div class="drivergrid"><div><section class="panel detail"><h2>Aktuální zakázka</h2>'+(j?'<p><b>#'+j.id+' · '+esc(j.name)+' · '+cash(j.cents)+'</b></p><p>'+statusText[j.status]+(j.scheduled?' · '+esc(j.scheduled.replace('T',' ')):'')+'</p>'+jobRoute(j)+(j.note?'<p>'+esc(j.note)+'</p>':'')+'<div class="actions">'+(j.status!=='assigned'?driverNavigation(j):'')+'<button class="primary" data-drive="'+action[0]+'" data-id="'+j.id+'">'+action[1]+'</button></div>':'<p>Čekáte na novou zakázku od dispečera.</p>')+'</section></div><div><section class="panel detail"><h2>Dostupnost</h2><div class="actions"><button data-availability aria-pressed="'+Boolean(state.occupied?.[actor])+'" '+(j?'disabled':'')+'>'+(state.occupied?.[actor]?'Nastavit jako volný':'Nastavit jako obsazený')+'</button></div></section><section class="panel detail"><h2>Sdílení polohy</h2><p>'+esc(gpsStatus)+'</p><div class="actions"><button data-gps>'+ (gps===null?'Zapnout GPS':'Zastavit GPS')+'</button></div></section><section class="panel detail"><h2>Dnešní jízdy</h2><div class="actions"><button data-page="history">Otevřít denní přehled</button></div></section></div></div>';
+ const summary=$('#driver-summary');
+ summary.querySelector('section').hidden=!can('driverRide');
+ for(const [selector,permission] of [['[data-availability]','availability'],['[data-gps]','gps'],['[data-page="history"]','history']]){
+   summary.querySelector(selector).closest('section').hidden=!can(permission);
+ }
  renderDriverMap();
 }
 function fresh(p){return Boolean(p&&(p.demo||Date.now()-p.time<45000));}
@@ -208,16 +241,64 @@ function project(p,level=zoom){
  const size=256*2**level, sine=Math.sin(Math.max(-85,Math.min(85,p.lat))*Math.PI/180);
  return {x:(p.lng+180)/360*size,y:(.5-Math.log((1+sine)/(1-sine))/(4*Math.PI))*size};
 }
-function renderTiles(layer,level,x,y,w,h){
- const key=[level,x,y,w,h].join();
+const osmCredit='<a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">© OpenStreetMap</a>';
+const cartoCredit=osmCredit+' · <a href="https://carto.com/attributions" target="_blank" rel="noopener">© CARTO</a>';
+const cartoTiles=(style,z,x,y)=>'https://basemaps.cartocdn.com/'+style+'/'+z+'/'+x+'/'+y+'.png';
+const mapStyles={
+ classic:{label:'Klasická',credit:osmCredit,tile:(z,x,y)=>'https://tile.openstreetmap.org/'+z+'/'+x+'/'+y+'.png'},
+ light:{label:'Světlá',credit:cartoCredit,tile:(...coords)=>cartoTiles('light_all',...coords)},
+ dark:{label:'Tmavá',credit:cartoCredit,tile:(...coords)=>cartoTiles('dark_all',...coords)},
+ voyager:{label:'Barevná',credit:cartoCredit,tile:(...coords)=>cartoTiles('rastertiles/voyager',...coords)},
+ aerial:{
+   label:'Letecká / satelitní',
+   credit:'<a href="https://www.arcgis.com/home/item.html?id=10df2279f9684e4a9f6a7f08febac2a9" target="_blank" rel="noopener">© Esri, Maxar, Earthstar Geographics a GIS User Community</a>',
+   tile:(z,x,y)=>'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/'+z+'/'+y+'/'+x
+ },
+ terrain:{
+   label:'Turistická / topografická',
+   credit:osmCredit+' · <a href="https://opentopomap.org/about" target="_blank" rel="noopener">© OpenTopoMap (CC BY-SA)</a> · SRTM',
+   tile:(z,x,y)=>'https://tile.opentopomap.org/'+z+'/'+x+'/'+y+'.png'
+ }
+};
+const mapPreferenceKey=(kind,id=actor)=>'startaxi.map.'+id+'.'+kind;
+const mapPreferences={fleet:'classic',driver:'classic'};
+function loadMapPreferences(){
+ for(const kind of ['fleet','driver']){
+   let value;
+   try{value=localStorage.getItem(mapPreferenceKey(kind));}catch{}
+   mapPreferences[kind]=Object.hasOwn(mapStyles,value)?value:'classic';
+ }
+}
+function renderMapSettings(){
+ const showDriverMap=can('driverRide')||can('gps');
+ $('#map-settings').hidden=!can('fleetMap')&&!showDriverMap;
+ $('#driver-map-style-label').hidden=!showDriverMap;
+ for(const kind of ['fleet','driver']) $('#'+kind+'-map-style').value=mapPreferences[kind];
+}
+for(const kind of ['fleet','driver']){
+ const select=$('#'+kind+'-map-style');
+ select.replaceChildren(...Object.entries(mapStyles).map(([key,style])=>new Option(style.label,key)));
+ select.addEventListener('change',()=>{
+   if(!Object.hasOwn(mapStyles,select.value)) return;
+   mapPreferences[kind]=select.value;
+   try{localStorage.setItem(mapPreferenceKey(kind),select.value);}catch{}
+   renderMap();
+   renderDriverMap();
+ });
+}
+function renderTiles(layer,kind,level,x,y,w,h){
+ const style=mapPreferences[kind];
+ const {tile,credit}=mapStyles[style];
+ const key=[style,level,x,y,w,h].join();
  if(layer.dataset.view===key) return;
  layer.dataset.view=key;
+ layer.parentElement.querySelector('.mapcredit').innerHTML=credit;
  const count=2**level;
  let tiles='';
  for(let tx=Math.floor(x/256);tx<=Math.floor((x+w)/256);tx++) for(let ty=Math.floor(y/256);ty<=Math.floor((y+h)/256);ty++){
    if(ty<0||ty>=count) continue;
    const wrap=((tx%count)+count)%count;
-   tiles+='<img alt="" draggable="false" style="left:'+(tx*256-x)+'px;top:'+(ty*256-y)+'px" src="https://tile.openstreetmap.org/'+level+'/'+wrap+'/'+ty+'.png">';
+   tiles+='<img alt="" draggable="false" style="left:'+(tx*256-x)+'px;top:'+(ty*256-y)+'px" src="'+tile(level,wrap,ty)+'">';
  }
  layer.innerHTML='<div class="mapfallback"><small>Mapový podklad se načítá</small></div>'+tiles;
  layer.querySelectorAll('img').forEach(img=>img.addEventListener('error',()=>{
@@ -227,7 +308,7 @@ function renderTiles(layer,level,x,y,w,h){
 }
 function renderDriverMap(){
  const map=$('#driver-map'), w=map.clientWidth, h=map.clientHeight;
- if(!live||page!=='driver'||!w||!h) return;
+ if(!live||page!=='driver'||(!can('driverRide')&&!can('gps'))||!w||!h) return;
  const j=busy(state,actor);
  const position=state.positions[actor];
  const stops=[
@@ -250,7 +331,7 @@ function renderDriverMap(){
  } while(true);
  const middle=bounds?{x:(bounds[0]+bounds[1])/2,y:(bounds[2]+bounds[3])/2}:project(center,level);
  const x=Math.round(middle.x-w/2), y=Math.round(middle.y-h/2);
- renderTiles(map.querySelector('.map-tiles'),level,x,y,w,h);
+ renderTiles(map.querySelector('.map-tiles'),'driver',level,x,y,w,h);
  map.querySelector('.map-markers').innerHTML=stops.map(([,symbol,color,label],index)=>{
    const point=points[index];
    return '<span class="marker stop-marker '+color+'" style="left:'+(point.x-x)+'px;top:'+(point.y-y)+'px" role="img" aria-label="'+label+'">'+icon(symbol)+'<small>'+label+'</small></span>';
@@ -258,9 +339,9 @@ function renderDriverMap(){
 }
 function renderMap(){
  const map=$('#map'), w=map.clientWidth,h=map.clientHeight;
- if(!live||!w||!h) return;
+ if(!live||page!=='dispatch'||!can('fleetMap')||!w||!h) return;
  const c=project(center), x=c.x-w/2-offset.x,y=c.y-h/2-offset.y;
- renderTiles($('#tiles'),zoom,x,y,w,h);
+ renderTiles($('#tiles'),'fleet',zoom,x,y,w,h);
  $('#markers').innerHTML=drivers.map(d=>{
    const p=state.positions[d.id];
    if(!fresh(p)) return '';
@@ -269,7 +350,7 @@ function renderMap(){
    const distance=j?.status==='onboard'&&j.target&&fresh(p)?meters(p,j.target):null;
    const color=distance!==null&&distance<=2000?'orange':occupied(d.id)?'red':'green';
      const label=d.name+' · '+(j?statusText[j.status]:occupied(d.id)?'obsazený':'volný')+(p.accuracy!=null?' · ±'+Math.round(p.accuracy)+' m':'');
-   return '<button type="button" class="marker '+color+(selected===d.id?' selected':'')+'" style="'+'left:'+(point.x-x)+'px;top:'+(point.y-y)+'px" data-car="'+d.id+'" title="'+esc(label)+'" aria-label="'+esc(label)+'">'+icon('taxi')+'<small>Taxi '+d.id+'</small></button>';
+   return '<button type="button" '+(can('assign')?'':'disabled ')+'class="marker '+color+(selected===d.id?' selected':'')+'" style="'+'left:'+(point.x-x)+'px;top:'+(point.y-y)+'px" data-car="'+d.id+'" title="'+esc(label)+'" aria-label="'+esc(label)+'">'+icon('taxi')+'<small>Taxi '+d.id+'</small></button>';
  }).join('')+state.jobs.flatMap(j=>{
    if(j.status==='cancelled') return [];
    const done=j.status==='done';
@@ -475,7 +556,8 @@ document.addEventListener('click',async e=>{
  if(!b||!live) return;
  const d=b.dataset;
  if(d.page){
-   page=d.page==='dispatch'&&!managesFleet(actor)?'driver':d.page;
+   if(!canSeePage(d.page)) return;
+   page=d.page;
    if(page==='settings') fillProfileForm();
    render();
    return;
@@ -487,14 +569,14 @@ document.addEventListener('click',async e=>{
    renderMap();return;
  }
  if(d.queue){queue=d.queue;renderQueue();return;}
- if(d.car){
+ if(d.car&&can('assign')){
    if(occupied(d.car)){notify('Toto vozidlo je obsazené.');return;}
    if(live&&!fresh(state.positions[d.car])){notify('Řidič nesdílí aktuální polohu.');return;}
    selected=selected===d.car?'':d.car;queue='waiting';render();
    if(selected) notify(driverName(selected)+' · vyberte zakázku');
    return;
  }
- if(d.jobEdit&&managesFleet(actor)){
+ if(d.jobEdit&&can(d.jobEdit==='cancelJob'?'cancel':'edit')){
    const job=state.jobs.find(j=>j.id===Number(d.id));
    if(!job) return;
    b.closest('details').open=false;
@@ -513,22 +595,22 @@ document.addEventListener('click',async e=>{
    $('#job-editor').showModal();
    return;
  }
- if(d.job){
+ if(d.job&&can('assign')){
    if(!selected){notify('Nejdříve vyberte volné vozidlo na mapě.');return;}
    const name=driverName(selected);
    if(await perform({type:'assign',id:Number(d.job),driver:selected})) notify('Zakázka přiřazena · '+name);
    return;
  }
- if(d.drive){
+ if(d.drive&&can('driverRide')){
    if(await perform({type:d.drive,id:Number(d.id)})) notify({accept:'Zakázka přijata.',pickup:'Vyzvednutí potvrzeno.',complete:'Jízda dokončena.'}[d.drive]);
    return;
  }
- if(d.availability!==undefined){
+ if(d.availability!==undefined&&can('availability')){
    await perform({type:'availability',occupied:!state.occupied?.[actor]});
    return;
  }
- if(d.gps!==undefined){toggleGps();return;}
- if(d.shift!==undefined){
+ if(d.gps!==undefined&&can('gps')){toggleGps();return;}
+ if(d.shift!==undefined&&can('closeShift')){
    const sum=state.jobs.filter(j=>j.driver===actor&&j.status==='done'&&day(j.done)===reportDate&&!j.shift).reduce((t,j)=>t+j.cents,0);
    $('#shifttext').textContent=fmtDate(reportDate)+' · celkem '+cash(sum);
    $('#shiftform').elements.total.value=(sum/100).toFixed(2);
@@ -577,18 +659,62 @@ $('#loginform').addEventListener('submit',async e=>{
  catch(e){notify(e.message);}
  finally{submit.disabled=false;}
 });
-$('#employee-form').addEventListener('submit',async e=>{
- e.preventDefault();
- const form=e.currentTarget;
- const submit=form.querySelector('button');
- submit.disabled=true;
- try{
-   receive(await api('drivers',Object.fromEntries(new FormData(form))));
-   form.reset();
-   notify('Účet řidiče byl vytvořen.');
- }catch(error){notify(error.message);}
- finally{submit.disabled=false;}
+const employeeForm=$('#employee-form');
+const permissionForm=$('#permissions-form');
+function renderPermissionChoices(container,role,chosen){
+ container.innerHTML=availablePermissions(role).map(key=>
+   '<label><input type="checkbox" name="permissions" value="'+key+'" '+(chosen.includes(key)?'checked':'')+'>'+permissionLabels[key]+'</label>'
+ ).join('');
+}
+function fillDefaultPermissions(){
+ const role=employeeForm.elements.role.value;
+ renderPermissionChoices($('#new-permissions'),role,defaultPermissions(role));
+}
+fillDefaultPermissions();
+employeeForm.elements.role.addEventListener('change',fillDefaultPermissions);
+function renderUserSettings(){
+ $('#user-settings').hidden=!isOwner(actor);
+ if(!isOwner(actor)) return;
+ $('#employee-list').innerHTML=(state.employees||[]).map(employee=>
+   '<div class="employee"><div><strong>'+esc([employee.firstName,employee.lastName].filter(Boolean).join(' ')||employee.username)+'</strong><p>'+roleLabel(employee.role)+' · '+esc(employee.username)+'</p></div>'+
+   '<button type="button" data-employee="'+esc(employee.id)+'">Upravit oprávnění</button></div>'
+ ).join('')||'<p class="empty">Zatím nejsou vytvořené žádné účty.</p>';
+}
+$('#employee-list').addEventListener('click',event=>{
+ const id=event.target.closest('[data-employee]')?.dataset.employee;
+ const employee=state.employees.find(entry=>entry.id===id);
+ if(!employee) return;
+ permissionForm.dataset.id=employee.id;
+ $('#permission-employee').textContent=[employee.firstName,employee.lastName].filter(Boolean).join(' ')||employee.username;
+ renderPermissionChoices($('#edit-permissions'),employee.role,employee.permissions);
+ $('#permission-editor').showModal();
 });
+for(const [form,path,message] of [
+ [employeeForm,'employees','Účet zaměstnance byl vytvořen.'],
+ [permissionForm,'employee-permissions','Oprávnění byla uložena.']
+]){
+ form.addEventListener('submit',async event=>{
+   event.preventDefault();
+   const fields=new FormData(form);
+   const payload={...Object.fromEntries(fields),permissions:fields.getAll('permissions')};
+   if(form===permissionForm) payload.id=form.dataset.id;
+   const submit=form.querySelector('[type="submit"], .primary');
+   const generation=sessionGeneration;
+   submit.disabled=true;
+   try{
+     const data=await api(path,payload);
+     if(!live||generation!==sessionGeneration) return;
+     receive(data);
+     if(form===permissionForm) $('#permission-editor').close();
+     else {form.reset();fillDefaultPermissions();}
+     notify(message);
+   }catch(error){
+     if(generation!==sessionGeneration) return;
+     if(error.status===401) lockApp();
+     notify(error.message);
+   }finally{submit.disabled=false;}
+ });
+}
 function fillProfileForm(){
  const form=$('#profile-form');
  form.reset();
