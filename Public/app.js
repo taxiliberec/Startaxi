@@ -834,6 +834,10 @@ for(const form of [$('#booking'),$('#own-ride'),$('#job-edit-form')]){
            const choice=document.createElement('button');
            choice.type='button';
            choice.textContent=result.address;
+           // Keep the input focused until the suggestion click is delivered, including on iOS Safari.
+           choice.addEventListener('pointerdown',event=>{
+             if(event.button===0) event.preventDefault();
+           });
            choice.addEventListener('click',()=>{
              input.value=result.address;
              selectedAddresses.set(input,result);
