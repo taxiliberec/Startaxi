@@ -184,6 +184,72 @@ function houseAddress({properties:p,geometry}){
   return address.length<=200?{address,point}:null;
 }
 
+const ruianBase='https://ags.cuzk.cz/arcgis/rest/services/RUIAN/MapServer/';
+const liberecCode=563889;
+const foldStreet=value=>value.normalize('NFD').replace(/\p{M}/gu,'').toLocaleLowerCase('cs').replace(/\s+/g,' ').trim();
+let liberecStreetCache;
+async function ruianQuery(layer,params){
+  const endpoint=new URL(layer+'/query',ruianBase);
+  endpoint.search=new URLSearchParams({f:'json',...params});
+  const response=await fetch(endpoint,{signal:AbortSignal.timeout(3500)});
+  if(!response.ok) throw Error('RÚIAN lookup failed');
+  const {features}=await response.json();
+  if(!Array.isArray(features)) throw Error('Invalid RÚIAN response');
+  return features;
+}
+function liberecStreets(){
+  if(liberecStreetCache?.expires>Date.now()) return liberecStreetCache.result;
+  const result=ruianQuery(4,{where:'obec='+liberecCode,outFields:'kod,nazev',returnGeometry:'false'})
+    .then(features=>features.flatMap(({attributes:a})=>Number.isInteger(a?.kod)&&a.kod>0&&typeof a.nazev==='string'
+      ? [{id:a.kod,name:a.nazev,key:foldStreet(a.nazev)}]:[]))
+    .catch(error=>{
+      liberecStreetCache=null;
+      throw error;
+    });
+  liberecStreetCache={result,expires:Date.now()+86400000};
+  return result;
+}
+async function liberecAddresses(address){
+  const [streetAndNumber,city,...extras]=foldStreet(address).split(',').map(part=>part.trim());
+  if(extras.length||(city&&!/^(?:\d{3}\s?\d{2}\s+)?liberec\b/.test(city))) return [];
+  const query=streetAndNumber.replace(/\s+liberec$/,'');
+  const numbered=query.match(/^(.+?)\s+(\d{1,5})(?:\/(\d{1,5})([a-z])?)?$/);
+  const streetQuery=numbered?.[1]??query;
+  if(streetQuery.length<3) return [];
+  const streets=await liberecStreets();
+  const exact=streets.filter(street=>street.key===streetQuery);
+  const matches=exact.length?exact:streets.filter(street=>street.key.startsWith(streetQuery))
+    .sort((a,b)=>a.name.localeCompare(b.name,'cs')).slice(0,5);
+  if(!matches.length) return [];
+  const byId=new Map(matches.map(street=>[street.id,street.name]));
+  let where='ulice IN ('+matches.map(street=>street.id).join(',')+')';
+  if(numbered){
+    const house=Number(numbered[2]);
+    where+=numbered[3]
+      ? ' AND cislodomovni='+house+' AND cisloorientacni='+Number(numbered[3])
+      : ' AND (cislodomovni='+house+' OR cisloorientacni='+house+')';
+  }
+  const features=await ruianQuery(1,{
+    where,outFields:'ulice,cislodomovni,cisloorientacni,cisloorientacnipismeno,psc',
+    outSR:'4326',returnGeometry:'true',
+    orderByFields:'ulice,cislodomovni,cisloorientacni,cisloorientacnipismeno',resultRecordCount:'100'
+  });
+  const suggestions=new Map();
+  for(const {attributes:a,geometry} of features){
+    const street=byId.get(a?.ulice);
+    const point={lat:geometry?.y,lng:geometry?.x};
+    if(!street||!Number.isInteger(a.cislodomovni)||a.cislodomovni<=0||!validPoint(point)) continue;
+    const suffix=a.cisloorientacnipismeno??'';
+    if(numbered?.[4]&&suffix.toLowerCase()!==numbered[4]) continue;
+    const orientation=a.cisloorientacni?'/'+a.cisloorientacni+suffix:'';
+    const zip=String(a.psc??'').replace(/^(\d{3})(\d{2})$/,'$1 $2');
+    const location=zip?zip+' Liberec':'Liberec';
+    const label=street+' '+a.cislodomovni+orientation+', '+location;
+    suggestions.set(label,{address:label,point});
+  }
+  return [...suggestions.values()].slice(0,50);
+}
+
 async function handleApi(request,env,path){
   const origin=request.headers.get('Origin');
   if(request.method==='POST'&&origin&&origin!==new URL(request.url).origin) return json({error:'Přístup zamítnut.'},403);
@@ -421,6 +487,10 @@ async function handleApi(request,env,path){
     }
     const {address}=body;
     if(typeof address!=='string'||address.trim().length<3||address.length>200) return json({suggestions:[]});
+    try{
+      const suggestions=await liberecAddresses(address.trim());
+      if(suggestions.length) return json({suggestions});
+    }catch{/* Photon remains available when RÚIAN cannot be reached. */}
     const endpoint=new URL('https://photon.komoot.io/api/');
     endpoint.search=new URLSearchParams({
       q:address.trim(), lat:'50.7695', lon:'15.0514', countrycode:'CZ', limit:'15'
