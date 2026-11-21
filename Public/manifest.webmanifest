@@ -1,7 +1,7 @@
 {
   "id": "/",
-  "name": "STAR TAXI · Dispečink Liberec",
-  "short_name": "STAR TAXI",
+  "name": "taximetr · Dispečink Liberec",
+  "short_name": "taximetr",
   "lang": "cs",
   "start_url": "/",
   "scope": "/",
@@ -9,7 +9,7 @@
   "theme_color": "#101827",
   "background_color": "#f2f5fa",
   "icons": [
-    {"src": "/star-taxi-192.png", "sizes": "192x192", "type": "image/png"},
-    {"src": "/star-taxi-512.png", "sizes": "512x512", "type": "image/png"}
+    {"src": "/taximetr-192.png", "sizes": "192x192", "type": "image/png"},
+    {"src": "/taximetr-512.png", "sizes": "512x512", "type": "image/png"}
   ]
 }
