@@ -389,9 +389,10 @@ const locationEditor=$('#location-editor');
 const locationMap=$('#location-map');
 const locationTiles=locationMap.querySelector('.map-tiles');
 const locationConfirm=$('#location-confirm');
+const locationAddress=$('#location-address');
 const locationZoomIn=$('#location-zoom-in'), locationZoomOut=$('#location-zoom-out');
 locationMap.querySelector('.location-pin').innerHTML=icon('pin');
-let locationDraft, locationDrag;
+let locationDraft, locationDrag, locationLookupTimer;
 function renderLocationMap(){
  if(!locationEditor.open||!locationDraft) return;
  const {point,level}=locationDraft;
@@ -400,7 +401,7 @@ function renderLocationMap(){
  renderTiles(locationTiles,'location',level,x-w/2,y-h/2,w,h);
  locationZoomIn.disabled=level>=19;
  locationZoomOut.disabled=level<=3;
- locationConfirm.disabled=!locationDraft.placed;
+ locationConfirm.disabled=!locationDraft.placed||locationDraft.lookingUp;
 }
 function moveLocationPin(dx,dy){
  const {point,level}=locationDraft;
@@ -411,7 +412,27 @@ function moveLocationPin(dx,dy){
    lng:((((x+dx)%size)+size)%size)/size*360-180
  };
  locationDraft.placed=true;
+ lookupLocationAddress();
  renderLocationMap();
+}
+function lookupLocationAddress(){
+ const draft=locationDraft;
+ const {point}=draft;
+ draft.lookingUp=true;
+ locationAddress.textContent='Hledám adresu u špendlíku…';
+ clearTimeout(locationLookupTimer);
+ locationLookupTimer=setTimeout(async()=>{
+   let address, failed=false;
+   try{({address}=await api('reverse-geocode',{point}));}
+   catch{failed=true;}
+   if(!locationEditor.open||locationDraft!==draft||draft.point!==point) return;
+   draft.address=address??draft.typed;
+   draft.lookingUp=false;
+   locationAddress.textContent=address??(failed
+     ? 'Adresu se nepodařilo načíst. Zůstane původní adresa: '+draft.typed
+     : 'V okolí špendlíku nebyla nalezena adresa. Zůstane původní adresa: '+draft.typed);
+   renderLocationMap();
+ },300);
 }
 new ResizeObserver(renderLocationMap).observe(locationMap);
 locationZoomIn.addEventListener('click',()=>{locationDraft.level++;renderLocationMap();});
@@ -459,13 +480,14 @@ const selectedAddresses=new WeakMap();
 locationEditor.querySelector('form').addEventListener('submit',event=>{
  if(event.submitter!==locationConfirm) return;
  const {input,typed,address,point,placed}=locationDraft;
- if(!placed||input.value.trim()!==typed){event.preventDefault();return;}
+ if(!placed||locationDraft.lookingUp||input.value.trim()!==typed){event.preventDefault();return;}
  input.value=address;
  selectedAddresses.set(input,{address,point});
  locationDraft.button.textContent='Poloha upřesněna na mapě';
 });
 locationEditor.addEventListener('close',()=>{
  if(locationEditor.open) return;
+ clearTimeout(locationLookupTimer);
  locationTiles.style.transform='';
  locationDraft=null;
  locationDrag=null;
@@ -507,8 +529,8 @@ for(const form of [$('#booking'),$('#own-ride'),$('#job-edit-form')]){
      }
      if(!live||generation!==sessionGeneration||request!==sequence||form.dataset.id!==jobId||
         input.value.trim()!==typed||locationEditor.open||!input.getClientRects().length) return;
-     locationDraft={input,button:refine,typed,address:match?.address??typed,point:match?.point??center,level:match?18:14,placed:Boolean(match)};
-     $('#location-address').textContent=locationDraft.address;
+     locationDraft={input,button:refine,typed,address:match?.address??typed,point:match?.point??center,level:match?18:14,placed:Boolean(match),lookingUp:false};
+     locationAddress.textContent=locationDraft.address;
      $('#location-help').textContent=(match?'':'Adresu se nepodařilo ověřit. ')+
        'Klepněte do mapy nebo ji posuňte pod špendlíkem. Klávesnicí použijte šipky.';
      locationEditor.showModal();
