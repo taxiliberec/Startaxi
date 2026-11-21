@@ -60,7 +60,6 @@
 #driver-map .marker small{top:32px}
 
 #user-settings h3 { margin-top: 20px; }
-#map-settings label + label { margin-top: 12px; }
 .permission-list { display: grid; gap: 8px; }
 .permission-list label { display: flex; align-items: center; gap: 9px; }
 .permission-list input { width: 18px; height: 18px; margin: 0; flex-shrink: 0; }
@@ -71,3 +70,25 @@
   .workspace[data-panels="2"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 .marker:disabled { opacity: 1; }
+
+.map-style { margin-left: auto; flex: 0 1 150px; }
+.map-style select { height: auto; padding: 5px; }
+.map-driver-label { position: absolute; transform: translate(-50%, 22px); display: grid; justify-items: center; gap: 2px; padding: 3px 6px; color: #23314a; background: #fff; border-radius: 5px; box-shadow: 0 1px 4px #0002; white-space: nowrap; font-size: 11px; }
+.map-driver-label button { pointer-events: auto; }
+#vehicle-status { display: flex; flex-wrap: wrap; gap: 8px 16px; }
+#vehicle-status button { margin-left: 5px; }
+.vehicle-link { border: 0; padding: 0; color: #2455cc; background: transparent; text-decoration: underline; text-align: left; }
+.employee-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: flex-start; }
+.vehicle-heading { display: flex; align-items: center; gap: 8px; }
+.vehicle-heading h2 { margin: 0; }
+.vehicle-logo { display: inline-grid; place-items: center; position: relative; width: 27px; height: 27px; flex: 0 0 27px; background: #fff; color: #42516a; border-radius: 5px; }
+.vehicle-logo img { position: absolute; inset: 0; margin: auto; background: white; }
+#vehicle-photo { display: block; width: 100%; max-height: 55vh; object-fit: contain; border-radius: 8px; margin-top: 12px; }
+#add-vehicle { margin-top: 12px; }
+#vehicle-picker { border: 1px solid var(--line); border-radius: 8px; padding: 9px; }
+#vehicle-selection { cursor: pointer; }
+#vehicle-selection .vehicle-logo { vertical-align: middle; margin-right: 7px; }
+#vehicle-options { display: grid; gap: 5px; max-height: 36vh; overflow: auto; padding: 8px 0 0; }
+#vehicle-options button { display: flex; align-items: center; gap: 8px; text-align: left; }
+.inline-choice { display: flex; align-items: center; gap: 7px; }
+.inline-choice input { width: 18px; height: 18px; margin: 0; }

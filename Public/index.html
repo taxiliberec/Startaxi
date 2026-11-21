@@ -3,12 +3,12 @@
 <body><header class="top" hidden><div class="brand"><img class="brand-logo" src="/star-taxi-192.png" alt="STAR TAXI"><div><b>Taxi Liberec</b><small>DISPEČERSKÝ SYSTÉM</small></div></div><nav><button data-page="dispatch"><i data-icon="grid"></i>Dispečink</button><button data-page="driver" hidden><i data-icon="taxi"></i>Moje vozidlo</button><button data-page="history"><i data-icon="chart"></i>Denní přehled</button><button data-page="activity" hidden><i data-icon="list"></i>Majitel</button><button data-page="settings">Nastavení</button></nav><div class="account"><span id="connection">Ukázková data</span><button id="login" aria-label="Přihlášení">Přihlásit se</button></div></header>
 <main id="app" hidden><div class="intro"><div><p class="eyebrow"><span></span> PROVOZ TAXI LIBEREC</p><h1 id="title">Dispečink</h1><p id="subtitle">Spravujte zakázky a sledujte polohu vozidel v Liberci.</p></div><div class="today"><i data-icon="calendar"></i><span id="today"></span></div></div><div id="stats" class="stats"></div>
 <div id="dispatch" class="workspace"><section class="panel formpanel" data-permission="create"><div class="panelhead"><span class="headicon" data-icon="plus"></span><div><h2>Nová zakázka</h2><p>Údaje z telefonické objednávky</p></div></div><form id="booking"><label>Jméno a příjmení<input name="name" required maxlength="120" placeholder="Např. Jan Novák"></label><label>Místo vyzvednutí<div class="field"><i data-icon="pin"></i><input name="pickup" required maxlength="200" placeholder="Ulice a číslo, Liberec"></div></label><label>Místo doručení<div class="field"><i data-icon="flag"></i><input name="dropoff" required maxlength="200" placeholder="Cílová adresa"></div></label><label>Pozdější čas vyzvednutí <small>Volitelné</small><input type="datetime-local" name="scheduled"></label><label>Poznámka <small>Volitelné</small><textarea name="note" maxlength="1000" placeholder="Např. vyzvednout u hlavního vchodu" rows="2"></textarea></label><label>Cena cesty<div class="field suffix"><input name="price" type="number" min="0" max="100000" step=".01" required placeholder="0"><span>Kč</span></div></label><button class="primary" type="submit"><i data-icon="plus"></i> Vytvořit zakázku</button></form></section>
-<section class="panel mappanel" data-permission="fleetMap"><div class="panelhead"><span class="headicon" data-icon="map"></span><div><h2>Mapa vozidel</h2><p>Liberec a okolí</p></div><span class="live" id="mapmode">UKÁZKA</span></div><div id="map" aria-label="Mapa Liberce"><div id="tiles"></div><div id="markers"></div><div class="maptools"><button data-zoom="1" aria-label="Přiblížit">+</button><button data-zoom="-1" aria-label="Oddálit">−</button><button data-zoom="0" aria-label="Vycentrovat">◎</button></div><div class="mapcredit">© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a></div></div><p id="vehicle-status" class="vehicle-status"></p><div class="legend"><span><em class="green"></em> Volný</span><span><em class="red"></em> Obsazený</span><span><em class="orange"></em> Blízko cíle</span><span class="maphint" id="maphint">Vyberte volné vozidlo</span></div></section>
+<section class="panel mappanel" data-permission="fleetMap"><div class="panelhead"><span class="headicon" data-icon="map"></span><div><h2>Mapa vozidel</h2><p>Liberec a okolí</p></div><label class="map-style">Podklad<select id="fleet-map-style"></select></label></div><div id="map" aria-label="Mapa Liberce"><div id="tiles"></div><div id="markers"></div><div class="maptools"><button data-zoom="1" aria-label="Přiblížit">+</button><button data-zoom="-1" aria-label="Oddálit">−</button><button data-zoom="0" aria-label="Vycentrovat">◎</button></div><div class="mapcredit">© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a></div></div><p id="vehicle-status" class="vehicle-status"></p><div class="legend"><span><em class="green"></em> Volný</span><span><em class="red"></em> Obsazený</span><span><em class="orange"></em> Blízko cíle</span><span class="maphint" id="maphint">Vyberte volné vozidlo</span></div></section>
 <section class="panel queuepanel" data-permission="dispatchJobs"><div class="panelhead"><span class="headicon" data-icon="list"></span><div><h2>Zakázky</h2><p>Přiřazení řidičům</p></div><span class="count" id="queuecount"></span></div><div class="tabs"><button data-queue="waiting" class="active">Čekající</button><button data-queue="active">Probíhající</button></div><div id="queue"></div></section></div>
 <section id="history" hidden></section><section id="driver" hidden>
   <div id="driver-summary"></div>
   <section class="panel driver-map-panel" id="driver-map-panel">
-    <div class="panelhead"><span class="headicon" data-icon="map"></span><div><h2>Mapa řidiče</h2><p id="driver-map-status"></p></div></div>
+    <div class="panelhead"><span class="headicon" data-icon="map"></span><div><h2>Mapa řidiče</h2><p id="driver-map-status"></p></div><label class="map-style">Podklad<select id="driver-map-style"></select></label></div>
     <div id="driver-map" role="group" aria-label="Poloha vozidla a zastávky aktuální zakázky">
       <div class="map-tiles"></div><div class="map-markers"></div>
       <div class="mapcredit">© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a></div>
@@ -32,7 +32,7 @@
 <section id="activity" hidden></section>
 <section id="settings" class="drivergrid" hidden>
   <section class="panel detail">
-    <h2>Můj profil</h2>
+    <h2>Můj profil</h2><p id="profile-vehicle" hidden></p>
     <form id="profile-form">
       <label>Jméno<input name="firstName" required maxlength="80" autocomplete="given-name"></label>
       <label>Příjmení<input name="lastName" required maxlength="80" autocomplete="family-name"></label>
@@ -44,10 +44,10 @@
       <button class="primary" type="submit">Uložit profil</button>
     </form>
   </section>
-  <section id="map-settings" class="panel detail">
-    <h2>Nastavení mapy</h2>
-    <label data-permission="fleetMap">Mapa dispečinku<select id="fleet-map-style"></select></label>
-    <label id="driver-map-style-label">Mapa řidiče<select id="driver-map-style"></select></label>
+  <section id="fleet-settings" class="panel detail" hidden>
+    <h2>Vozový park</h2>
+    <div id="fleet-list"></div>
+    <button type="button" class="primary" id="add-vehicle">Přidat vozidlo</button>
   </section>
 <section id="user-settings" class="panel detail" hidden>
 <h2>Správa uživatelů</h2><div id="employee-list"></div><h3>Přidat zaměstnance</h3><form id="employee-form">
@@ -71,6 +71,34 @@
     </form>
   </section>
 </section>
+<dialog id="vehicle-profile" aria-labelledby="vehicle-profile-name">
+  <div class="detail">
+    <div class="vehicle-heading"><span id="vehicle-profile-logo"></span><h2 id="vehicle-profile-name"></h2></div>
+    <img id="vehicle-photo" alt="Fotografie vozidla" hidden>
+    <div class="actions"><button type="button" data-close>Zavřít</button></div>
+  </div>
+</dialog>
+<dialog id="vehicle-editor" aria-labelledby="vehicle-editor-title">
+  <form id="vehicle-form">
+    <h2 id="vehicle-editor-title">Vozidlo</h2>
+    <label>Tovární značka<input name="make" maxlength="80" placeholder="Např. Škoda"></label>
+    <label>Model<input name="model" maxlength="80" placeholder="Např. Octavia"></label>
+    <label>Profilový obrázek<input name="photo" type="file" accept="image/*"></label>
+    <label class="inline-choice" id="remove-vehicle-photo" hidden><input name="removePhoto" type="checkbox"> Odstranit stávající obrázek</label>
+    <div class="actions"><button type="button" data-close>Zavřít</button><button type="submit" class="primary">Uložit vozidlo</button></div>
+  </form>
+</dialog>
+<dialog id="driver-vehicle-editor" aria-labelledby="driver-vehicle-title">
+  <form id="driver-vehicle-form">
+    <h2 id="driver-vehicle-title">Vozidlo řidiče</h2>
+    <p id="vehicle-driver-name"></p>
+    <details id="vehicle-picker">
+      <summary id="vehicle-selection"></summary>
+      <div id="vehicle-options"></div>
+    </details>
+    <div class="actions"><button type="button" data-close>Zavřít</button><button type="submit" class="primary">Uložit přiřazení</button></div>
+  </form>
+</dialog>
 <dialog id="permission-editor">
   <form id="permissions-form">
     <h2>Oprávnění zaměstnance</h2>

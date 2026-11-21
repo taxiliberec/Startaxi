@@ -17,7 +17,7 @@ const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&
 const cash=c=>new Intl.NumberFormat('cs-CZ',{style:'currency',currency:'CZK',maximumFractionDigits:c%100?2:0}).format(c/100);
 const fmtDate=d=>new Intl.DateTimeFormat('cs-CZ',{dateStyle:'long',timeZone:'Europe/Prague'}).format(new Date(d+'T12:00:00Z'));
 const time=t=>new Intl.DateTimeFormat('cs-CZ',{timeStyle:'short',timeZone:'Europe/Prague'}).format(t);
-let drivers=[], profile=null, revision=-1, sessionGeneration=0, role='', permissions=[];
+let vehicles=[], drivers=[], profile=null, revision=-1, sessionGeneration=0, role='', permissions=[];
 const can=key=>allows(permissions,key);
 const driverPage=()=>['driverRide','availability','gps'].some(can);
 const canSeePage=key=>({
@@ -41,7 +41,8 @@ async function api(path,body){
 }
 function receive(data){
  if(live&&data.actor===actor&&data.revision<revision) return;
- revision=data.revision; drivers=data.drivers; profile=data.profile;
+ const vehicleChanged=JSON.stringify([drivers,vehicles])!==JSON.stringify([data.drivers,data.vehicles]);
+ revision=data.revision; drivers=data.drivers; vehicles=data.vehicles; profile=data.profile;
  const wasLive=live;
  const jobsChanged=!wasLive||JSON.stringify(state.jobs)!==JSON.stringify(data.state.jobs);
  const otherChanged=!wasLive||JSON.stringify([state.employees,state.activity,state.shifts,state.occupied,state.owners])!==JSON.stringify([data.state.employees,data.state.activity,data.state.shifts,data.state.occupied,data.state.owners]);
@@ -54,7 +55,7 @@ function receive(data){
    for(const id of ['job-editor','shiftbox']) if($('#'+id).open) $('#'+id).close();
  }
  live=true; actor=data.actor; state=data.state;
- if(!wasLive||actor!==previous) loadMapPreferences();
+ if(!wasLive||actor!==previous){loadMapPreferences();syncMapControls();}
  if(!wasLive||actor!==previous||!canSeePage(page)){
    page=['activity','dispatch','driver','history','settings'].find(canSeePage);
    if(page==='settings') fillProfileForm();
@@ -64,12 +65,12 @@ function receive(data){
  if(active?.status==='assigned'&&incoming!==active.id){incoming=active.id; notify('Nová zakázka č. '+active.id); navigator.vibrate?.([150,80,150]);}
  if(fleetHistory()&&can('history')&&data.state.jobs.filter(j=>j.status==='done').length>noticeCount&&wasLive) notify('Zakázka dokončena.');
  noticeCount=state.jobs.filter(j=>j.status==='done').length;
- if(jobsChanged||otherChanged||permissionsChanged||previous!==actor) render();
+ if(jobsChanged||otherChanged||permissionsChanged||vehicleChanged||previous!==actor) render();
  else if(page==='dispatch'){stats();renderMap();}
  else if(page==='driver'){stats();renderDriverMap();}
 }
 function lockApp(){
- sessionGeneration++; revision=-1; drivers=[]; profile=null; state=null; live=false; stopGps();
+ sessionGeneration++; revision=-1; drivers=[]; vehicles=[]; profile=null; state=null; live=false; stopGps();
  for(const form of [$('#booking'),$('#own-ride'),$('#profile-form'),$('#owner-form'),$('#employee-form')]) form.reset();
  for(const dialog of document.querySelectorAll('dialog[open]')) dialog.close();
  fillDefaultPermissions();
@@ -118,7 +119,7 @@ function render(){
  $('#driver').hidden=page!=='driver';
  $('#activity').hidden=page!=='activity';
  $('#settings').hidden=page!=='settings';
- if(page==='settings'){renderOwners();renderUserSettings();renderMapSettings();}
+ if(page==='settings'){renderOwners();renderUserSettings();renderFleetSettings();}
  document.querySelectorAll('[data-permission]').forEach(el=>el.hidden=!can(el.dataset.permission));
  $('#driver-map-panel').hidden=!can('gps')&&!can('driverRide');
  $('#dispatch').setAttribute('data-panels',['create','fleetMap','dispatchJobs'].filter(can).length);
@@ -129,7 +130,6 @@ function render(){
  $('#login').textContent=!live?'Přihlásit se':(profile.firstName||roleLabel(role)).slice(0,1);
  $('#login').setAttribute('aria-label',live?'Odhlásit se':'Přihlásit se');
  $('#connection').textContent=roleLabel(role);
- $('#mapmode').textContent=live?'ŽIVĚ':'UKÁZKA';
  $('#title').textContent={dispatch:'Dispečink',driver:'Přehled řidiče',history:'Denní přehled',activity:'Majitel firmy',settings:'Nastavení'}[page];
  $('#subtitle').textContent=page==='dispatch'?'Spravujte zakázky a sledujte polohu vozidel v Liberci.':page==='driver'?driverName(actor)+' · Vozidlo '+actor:page==='activity'?'Přehled změn zakázek, směn a účtů řidičů.':page==='settings'?'Profil a nastavení aplikace':'Dokončené jízdy, tržby a uzávěrky směn.';
  stats();
@@ -250,14 +250,14 @@ const mapStyles={
  dark:{label:'Tmavá',credit:cartoCredit,tile:(...coords)=>cartoTiles('dark_all',...coords)},
  voyager:{label:'Barevná',credit:cartoCredit,tile:(...coords)=>cartoTiles('rastertiles/voyager',...coords)},
  aerial:{
-   label:'Letecká / satelitní',
-   credit:'<a href="https://www.arcgis.com/home/item.html?id=10df2279f9684e4a9f6a7f08febac2a9" target="_blank" rel="noopener">© Esri, Maxar, Earthstar Geographics a GIS User Community</a>',
-   tile:(z,x,y)=>'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/'+z+'/'+y+'/'+x
+   label:'Letecká (ČR)',
+   credit:'<a href="https://ags.cuzk.cz/arcgis1/rest/services/ORTOFOTO_WM/MapServer" target="_blank" rel="noopener">© ČÚZK</a>',
+   tile:(z,x,y)=>'https://ags.cuzk.cz/arcgis1/rest/services/ORTOFOTO_WM/MapServer/tile/'+z+'/'+y+'/'+x
  },
  terrain:{
    label:'Turistická / topografická',
    credit:osmCredit+' · <a href="https://opentopomap.org/about" target="_blank" rel="noopener">© OpenTopoMap (CC BY-SA)</a> · SRTM',
-   tile:(z,x,y)=>'https://tile.opentopomap.org/'+z+'/'+x+'/'+y+'.png'
+   tile:(z,x,y)=>'https://a.tile.opentopomap.org/'+z+'/'+x+'/'+y+'.png'
  }
 };
 const mapPreferenceKey=(kind,id=actor)=>'startaxi.map.'+id+'.'+kind;
@@ -269,10 +269,7 @@ function loadMapPreferences(){
    mapPreferences[kind]=Object.hasOwn(mapStyles,value)?value:'classic';
  }
 }
-function renderMapSettings(){
- const showDriverMap=can('driverRide')||can('gps');
- $('#map-settings').hidden=!can('fleetMap')&&!showDriverMap;
- $('#driver-map-style-label').hidden=!showDriverMap;
+function syncMapControls(){
  for(const kind of ['fleet','driver']) $('#'+kind+'-map-style').value=mapPreferences[kind];
 }
 for(const kind of ['fleet','driver']){
@@ -337,12 +334,13 @@ function renderDriverMap(){
    return '<span class="marker stop-marker '+color+'" style="left:'+(point.x-x)+'px;top:'+(point.y-y)+'px" role="img" aria-label="'+label+'">'+icon(symbol)+'<small>'+label+'</small></span>';
  }).join('');
 }
+let lastMarkerMarkup, lastStatusMarkup;
 function renderMap(){
  const map=$('#map'), w=map.clientWidth,h=map.clientHeight;
  if(!live||page!=='dispatch'||!can('fleetMap')||!w||!h) return;
  const c=project(center), x=c.x-w/2-offset.x,y=c.y-h/2-offset.y;
  renderTiles($('#tiles'),'fleet',zoom,x,y,w,h);
- $('#markers').innerHTML=drivers.map(d=>{
+ const markers=drivers.map(d=>{
    const p=state.positions[d.id];
    if(!fresh(p)) return '';
    const j=busy(state,d.id), point=project(p);
@@ -350,7 +348,10 @@ function renderMap(){
    const distance=j?.status==='onboard'&&j.target&&fresh(p)?meters(p,j.target):null;
    const color=distance!==null&&distance<=2000?'orange':occupied(d.id)?'red':'green';
      const label=d.name+' · '+(j?statusText[j.status]:occupied(d.id)?'obsazený':'volný')+(p.accuracy!=null?' · ±'+Math.round(p.accuracy)+' m':'');
-   return '<button type="button" '+(can('assign')?'':'disabled ')+'class="marker '+color+(selected===d.id?' selected':'')+'" style="'+'left:'+(point.x-x)+'px;top:'+(point.y-y)+'px" data-car="'+d.id+'" title="'+esc(label)+'" aria-label="'+esc(label)+'">'+icon('taxi')+'<small>Taxi '+d.id+'</small></button>';
+   const markerPosition='left:'+(point.x-x)+'px;top:'+(point.y-y)+'px';
+   const vehicle=vehicleById(d.vehicleId);
+   const marker='<button type="button" '+(can('assign')?'':'disabled ')+'class="marker '+color+(selected===d.id?' selected':'')+'" style="'+markerPosition+'" data-car="'+d.id+'" title="'+esc(label)+'" aria-label="'+esc(label)+'">'+icon('taxi')+'</button>';
+   return marker+'<div class="map-driver-label" style="'+markerPosition+'"><strong>'+esc(d.lastName||d.name)+'</strong>'+vehicleLink(vehicle)+'</div>';
  }).join('')+state.jobs.flatMap(j=>{
    if(j.status==='cancelled') return [];
    const done=j.status==='done';
@@ -364,11 +365,14 @@ function renderMap(){
      return '<span class="marker stop-marker '+color+'" style="left:'+left+'px;top:'+top+'px" role="img" aria-label="'+esc(label)+'" title="'+esc(label)+'">'+icon(symbol)+'</span>';
    });
  }).join('');
- $('#vehicle-status').textContent=drivers.filter(d=>fresh(state.positions[d.id])).map(d=>d.name+' · '+(occupied(d.id)?'obsazený':'volný')).join(' / ');
+ if(lastMarkerMarkup!==markers){$('#markers').innerHTML=markers;lastMarkerMarkup=markers;}
+ const status=drivers.filter(d=>fresh(state.positions[d.id]));
+ const statusMarkup=status.map(d=>'<span><strong>'+esc(d.lastName||d.name)+'</strong> · '+(occupied(d.id)?'obsazený':'volný')+vehicleLink(vehicleById(d.vehicleId))+'</span>').join('');
+ if(lastStatusMarkup!==statusMarkup){$('#vehicle-status').innerHTML=statusMarkup;lastStatusMarkup=statusMarkup;}
 }
 let drag;
 $('#map').addEventListener('pointerdown',e=>{
- if(e.target.closest('button')) return;
+ if(e.target.closest('button,select,label')) return;
  drag={x:e.clientX,y:e.clientY,...{ox:offset.x,oy:offset.y}};
  e.currentTarget.setPointerCapture(e.pointerId);
 });
@@ -563,6 +567,7 @@ document.addEventListener('click',async e=>{
    return;
  }
  if(d.close!==undefined){b.closest('dialog').close();return;}
+ if(d.vehicleProfile){showVehicle(d.vehicleProfile);return;}
  if(d.zoom!==undefined){
    if(Number(d.zoom)===0){zoom=13;offset={x:0,y:0};}
    else {const next=Math.max(11,Math.min(17,zoom+Number(d.zoom)));offset={x:offset.x*2**(next-zoom),y:offset.y*2**(next-zoom)};zoom=next;}
@@ -672,18 +677,154 @@ function fillDefaultPermissions(){
 }
 fillDefaultPermissions();
 employeeForm.elements.role.addEventListener('change',fillDefaultPermissions);
+const vehicleById=id=>vehicles.find(vehicle=>vehicle.id===id);
+const vehicleName=vehicle=>[vehicle.make,vehicle.model].filter(Boolean).join(' ')||'Vozidlo '+vehicle.id.slice(0,6);
+const makeLogos=new Map([
+ ['skoda','skoda'],['volkswagen','volkswagen'],['vw','volkswagen'],['toyota','toyota'],
+ ['hyundai','hyundai'],['kia','kia'],['ford','ford'],['dacia','dacia'],['renault','renault'],
+ ['peugeot','peugeot'],['citroen','citroen'],['mercedes','mercedesbenz'],['mercedes benz','mercedesbenz'],
+ ['mercedes-benz','mercedesbenz'],['bmw','bmw'],['audi','audi'],['seat','seat'],
+ ['opel','opel'],['fiat','fiat'],['nissan','nissan'],['mazda','mazda'],['tesla','tesla'],
+ ['volvo','volvo'],['honda','honda'],['suzuki','suzuki'],['mitsubishi','mitsubishi'],
+ ['lexus','lexus'],['subaru','subaru'],['cupra','cupra']
+]);
+function vehicleLogo(vehicle){
+ const make=vehicle?.make.normalize('NFD').replace(/\p{Diacritic}/gu,'').toLowerCase();
+ const slug=makeLogos.get(make);
+ return '<span class="vehicle-logo">'+icon('taxi')+(slug?'<img src="https://cdn.simpleicons.org/'+slug+'" alt="" width="20" height="20">':'')+'</span>';
+}
+document.addEventListener('error',event=>{
+ if(event.target.matches?.('.vehicle-logo img')) event.target.remove();
+},true);
+function vehicleLink(vehicle){
+ return vehicle?'<button type="button" class="vehicle-link" data-vehicle-profile="'+esc(vehicle.id)+'">'+esc(vehicleName(vehicle))+'</button>':'';
+}
+function showVehicle(id){
+ const vehicle=vehicleById(id);
+ if(!vehicle) return;
+ $('#vehicle-profile-name').textContent=vehicleName(vehicle);
+ $('#vehicle-profile-logo').innerHTML=vehicleLogo(vehicle);
+ const photo=$('#vehicle-photo');
+ photo.hidden=!vehicle.hasPhoto;
+ if(vehicle.hasPhoto) photo.src='/api/vehicle-photo/'+encodeURIComponent(id)+'?v='+revision;
+ else photo.removeAttribute('src');
+ $('#vehicle-profile').showModal();
+}
+const vehicleForm=$('#vehicle-form'), driverVehicleForm=$('#driver-vehicle-form');
+function renderFleetSettings(){
+ const vehicle=vehicleById(drivers.find(driver=>driver.id===actor)?.vehicleId);
+ const own=$('#profile-vehicle');
+ own.hidden=role!=='driver';
+ own.innerHTML=vehicle?'Přiřazené vozidlo '+vehicleLink(vehicle):'Vozidlo nepřiřazeno';
+ $('#fleet-settings').hidden=!isOwner(actor);
+ if(!isOwner(actor)) return;
+ $('#fleet-list').innerHTML=vehicles.map(vehicle=>{
+   const driver=state.employees.find(employee=>employee.vehicleId===vehicle.id);
+   const assignee=driver?[driver.firstName,driver.lastName].filter(Boolean).join(' ')||driver.username:'Nepřiřazeno';
+   return '<div class="employee"><div><div class="vehicle-heading">'+vehicleLogo(vehicle)+vehicleLink(vehicle)+'</div><p>'+esc(assignee)+'</p></div>'+
+     '<button type="button" data-edit-vehicle="'+esc(vehicle.id)+'">Upravit</button></div>';
+ }).join('')||'<p>Zatím nejsou přidaná žádná vozidla.</p>';
+}
+function editVehicle(vehicle){
+ vehicleForm.reset();
+ vehicleForm.dataset.id=vehicle?.id??'';
+ vehicleForm.elements.make.value=vehicle?.make??'';
+ vehicleForm.elements.model.value=vehicle?.model??'';
+ $('#vehicle-editor-title').textContent=vehicle?'Upravit vozidlo':'Přidat vozidlo';
+ $('#remove-vehicle-photo').hidden=!vehicle?.hasPhoto;
+ $('#vehicle-editor').showModal();
+}
+$('#add-vehicle').addEventListener('click',()=>editVehicle());
+$('#fleet-list').addEventListener('click',event=>{
+ const id=event.target.closest('[data-edit-vehicle]')?.dataset.editVehicle;
+ if(id) editVehicle(vehicleById(id));
+});
+function selectVehicle(id){
+ driverVehicleForm.dataset.vehicleId=id;
+ const vehicle=vehicleById(id);
+ $('#vehicle-selection').innerHTML=vehicle?vehicleLogo(vehicle)+esc(vehicleName(vehicle)):'Bez vozidla';
+ $('#vehicle-picker').open=false;
+}
+function assignVehicle(employee){
+ driverVehicleForm.dataset.id=employee.id;
+ $('#vehicle-driver-name').textContent=[employee.firstName,employee.lastName].filter(Boolean).join(' ')||employee.username;
+ const occupied=new Set(state.employees.filter(driver=>driver.id!==employee.id).map(driver=>driver.vehicleId));
+ $('#vehicle-options').innerHTML='<button type="button" data-vehicle-option="">Bez vozidla</button>'+vehicles.map(vehicle=>
+   '<button type="button" data-vehicle-option="'+esc(vehicle.id)+'" '+(occupied.has(vehicle.id)?'disabled':'')+'>'+
+    vehicleLogo(vehicle)+esc(vehicleName(vehicle))+(occupied.has(vehicle.id)?' · přiřazeno':'')+'</button>'
+ ).join('');
+ selectVehicle(employee.vehicleId??'');
+ $('#driver-vehicle-editor').showModal();
+}
+$('#vehicle-options').addEventListener('click',event=>{
+ const option=event.target.closest('[data-vehicle-option]');
+ if(option&&!option.disabled){selectVehicle(option.dataset.vehicleOption);$('#vehicle-selection').focus();}
+});
+async function prepareVehiclePhoto(file){
+ if(file.size>15000000) throw Error('Vyberte obrázek do 15 MB.');
+ const bitmap=await createImageBitmap(file);
+ try{
+   const scale=Math.min(1,640/Math.max(bitmap.width,bitmap.height));
+   const canvas=document.createElement('canvas');
+   canvas.width=Math.max(1,Math.round(bitmap.width*scale));
+   canvas.height=Math.max(1,Math.round(bitmap.height*scale));
+   const context=canvas.getContext('2d',{alpha:false});
+   context.fillStyle='#fff';
+   context.fillRect(0,0,canvas.width,canvas.height);
+   context.drawImage(bitmap,0,0,canvas.width,canvas.height);
+   for(const quality of [.82,.65,.5,.35,.2]){
+     const photo=canvas.toDataURL('image/jpeg',quality);
+     if(photo.length<=112000) return photo;
+   }
+   throw Error('Obrázek je příliš velký.');
+ }finally{bitmap.close();}
+}
+for(const [form,path,dialog,message] of [
+ [vehicleForm,'vehicles','#vehicle-editor','Vozidlo bylo uloženo.'],
+ [driverVehicleForm,'vehicle-assignment','#driver-vehicle-editor','Přiřazení bylo uloženo.']
+]){
+ form.addEventListener('submit',async event=>{
+   event.preventDefault();
+   const submit=form.querySelector('[type="submit"]');
+   const generation=sessionGeneration;
+   submit.disabled=true;
+   try{
+     const payload={id:form.dataset.id};
+     if(form===vehicleForm){
+       const {make,model,photo,removePhoto}=form.elements;
+       Object.assign(payload,{make:make.value,model:model.value});
+       if(photo.files.length) payload.photo=await prepareVehiclePhoto(photo.files[0]);
+       else if(removePhoto.checked) payload.photo='';
+     }else payload.vehicleId=form.dataset.vehicleId;
+     if(!live||generation!==sessionGeneration) return;
+     const data=await api(path,payload);
+     if(!live||generation!==sessionGeneration) return;
+     receive(data);
+     $(dialog).close();
+     notify(message);
+   }catch(error){
+     if(generation!==sessionGeneration) return;
+     if(error.status===401) lockApp();
+     notify(error.message);
+   }finally{submit.disabled=false;}
+ });
+}
 function renderUserSettings(){
  $('#user-settings').hidden=!isOwner(actor);
  if(!isOwner(actor)) return;
  $('#employee-list').innerHTML=(state.employees||[]).map(employee=>
-   '<div class="employee"><div><strong>'+esc([employee.firstName,employee.lastName].filter(Boolean).join(' ')||employee.username)+'</strong><p>'+roleLabel(employee.role)+' · '+esc(employee.username)+'</p></div>'+
-   '<button type="button" data-employee="'+esc(employee.id)+'">Upravit oprávnění</button></div>'
+   '<div class="employee"><div><strong>'+esc([employee.firstName,employee.lastName].filter(Boolean).join(' ')||employee.username)+'</strong><p>'+roleLabel(employee.role)+' · '+esc(employee.username)+'</p>'+
+   (employee.role==='driver'?(vehicleLink(vehicleById(employee.vehicleId))||'<p>Vozidlo nepřiřazeno</p>'):'')+'</div><div class="employee-actions">'+
+   '<button type="button" data-employee="'+esc(employee.id)+'">Upravit oprávnění</button>'+
+   (employee.role==='driver'?'<button type="button" data-assign-vehicle="'+esc(employee.id)+'">Vybrat vozidlo</button>':'')+'</div></div>'
  ).join('')||'<p class="empty">Zatím nejsou vytvořené žádné účty.</p>';
 }
 $('#employee-list').addEventListener('click',event=>{
- const id=event.target.closest('[data-employee]')?.dataset.employee;
+ const assignment=event.target.closest('[data-assign-vehicle]');
+ const id=assignment?.dataset.assignVehicle??event.target.closest('[data-employee]')?.dataset.employee;
  const employee=state.employees.find(entry=>entry.id===id);
  if(!employee) return;
+ if(assignment){assignVehicle(employee);return;}
  permissionForm.dataset.id=employee.id;
  $('#permission-employee').textContent=[employee.firstName,employee.lastName].filter(Boolean).join(' ')||employee.username;
  renderPermissionChoices($('#edit-permissions'),employee.role,employee.permissions);
