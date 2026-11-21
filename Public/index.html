@@ -124,4 +124,22 @@
     <div class="actions"><button type="button" data-close>Zpět</button><button class="primary" type="submit" id="job-edit-submit">Uložit</button></div>
   </form>
 </dialog>
+<dialog id="location-editor" aria-labelledby="location-title" aria-describedby="location-help">
+  <form method="dialog">
+    <h2 id="location-title">Upřesnit polohu</h2>
+    <p id="location-address"></p>
+    <p id="location-help"></p>
+    <div id="location-map" tabindex="0" aria-label="Mapa pro výběr polohy">
+      <div class="map-tiles"></div>
+      <div class="location-pin" aria-hidden="true"></div>
+      <div class="mapcredit"></div>
+    </div>
+    <div class="actions location-actions">
+      <button type="button" id="location-zoom-out" aria-label="Oddálit mapu">−</button>
+      <button type="button" id="location-zoom-in" aria-label="Přiblížit mapu">+</button>
+      <button value="cancel">Zpět</button>
+      <button value="confirm" id="location-confirm" class="primary">Použít polohu</button>
+    </div>
+  </form>
+</dialog>
 <dialog id="shiftbox"><form id="shiftform"><h2>Uzavřít směnu</h2><p id="shifttext"></p><label>Potvrzená částka v Kč<input type="number" name="total" min="0" step=".01" required></label><div class="actions"><button type="button" data-close>Zrušit</button><button class="primary">Potvrdit uzávěrku</button></div></form></dialog><div id="toast" role="status"></div></body></html>

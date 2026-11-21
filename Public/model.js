@@ -95,7 +95,7 @@ export function change(s,actor,a,now=Date.now()){
       const name=ownRide ? a.firstName.trim()+' '+a.lastName.trim() : a.name;
       for(const [v,max] of [[name,121],[pickup,200],[dropoff,200]]) requireThat(typeof v==='string'&&v.trim()&&v.length<=max,'Vyplňte povinné údaje.');
       requireThat(typeof note==='string'&&note.length<=1000&&typeof scheduled==='string'&&(!scheduled||/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(scheduled))&&Number.isInteger(cents)&&cents>=0&&cents<=10000000,'Zkontrolujte čas, poznámku a cenu.');
-      requireThat([target,pickupPoint].every(p=>p==null||validPoint(p)),'Neplatné souřadnice adresy.');
+      requireThat(validPoint(pickupPoint)&&validPoint(target),'Vyberte adresu vyzvednutí i doručení se souřadnicemi.');
       s.jobs.unshift({id:++s.seq,name:name.trim(),pickup:pickup.trim(),dropoff:dropoff.trim(),note,scheduled,cents,target,pickupPoint,created:now,...(ownRide?{driver:actor,status:'accepted',ownRide:true}:{status:'waiting'})});
       break;
     }
@@ -113,6 +113,8 @@ export function change(s,actor,a,now=Date.now()){
         for(const [value,max] of [[name,120],[pickup,200],[dropoff,200]]) requireThat(typeof value==='string'&&value.trim()&&value.length<=max,'Vyplňte povinné údaje.');
         requireThat(typeof note==='string'&&note.length<=1000&&Number.isInteger(cents)&&cents>=0&&cents<=10000000,'Zkontrolujte poznámku a cenu.');
         requireThat([target,pickupPoint].every(p=>p==null||validPoint(p)),'Neplatné souřadnice adresy.');
+        requireThat(pickup.trim()===job.pickup||validPoint(pickupPoint),'Vyberte adresu vyzvednutí se souřadnicemi.');
+        requireThat(dropoff.trim()===job.dropoff||validPoint(target),'Vyberte adresu doručení se souřadnicemi.');
         Object.assign(job,{name:name.trim(),pickup:pickup.trim(),dropoff:dropoff.trim(),note,cents,
           pickupPoint:pickup.trim()===job.pickup?(pickupPoint??job.pickupPoint):pickupPoint,
           target:dropoff.trim()===job.dropoff?(target??job.target):target});
@@ -163,7 +165,7 @@ export function change(s,actor,a,now=Date.now()){
   }
   return s;
 }
-export const validPoint = p => Number.isFinite(p.lat)&&Math.abs(p.lat)<=90&&Number.isFinite(p.lng)&&Math.abs(p.lng)<=180;
+export const validPoint = p => Number.isFinite(p?.lat)&&Math.abs(p.lat)<=90&&Number.isFinite(p.lng)&&Math.abs(p.lng)<=180;
 export function meters(a,b){
   const rad=Math.PI/180;
   const lat=(a.lat+b.lat)*rad/2;

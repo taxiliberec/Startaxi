@@ -1,4 +1,4 @@
-import {isOwner,allows,availablePermissions,defaultPermissions,permissionLabels,day,busy,meters} from './model.js';
+import {isOwner,allows,availablePermissions,defaultPermissions,permissionLabels,day,busy,meters,validPoint} from './model.js';
 const $=sel=>document.querySelector(sel);
 const icons={
  person:'<circle cx="12" cy="5" r="2"/><path d="M5 10h14m-7 0v5m0 0-4 6m4-6 4 6"/>',
@@ -52,7 +52,7 @@ function receive(data){
  if(!can('gps')&&gps!==null) stopGps();
  if(permissionsChanged){
    selected='';
-   for(const id of ['job-editor','shiftbox']) if($('#'+id).open) $('#'+id).close();
+   for(const id of ['location-editor','job-editor','shiftbox']) if($('#'+id).open) $('#'+id).close();
  }
  live=true; actor=data.actor; state=data.state;
  if(!wasLive||actor!==previous){loadMapPreferences();syncMapControls();}
@@ -261,7 +261,7 @@ const mapStyles={
  }
 };
 const mapPreferenceKey=(kind,id=actor)=>'startaxi.map.'+id+'.'+kind;
-const mapPreferences={fleet:'classic',driver:'classic'};
+const mapPreferences={fleet:'classic',driver:'classic',location:'classic'};
 function loadMapPreferences(){
  for(const kind of ['fleet','driver']){
    let value;
@@ -385,7 +385,91 @@ for(const event of ['pointerup','pointercancel']) $('#map').addEventListener(eve
 new ResizeObserver(renderMap).observe($('#map'));
 new ResizeObserver(renderDriverMap).observe($('#driver-map'));
 $('#today').textContent=new Intl.DateTimeFormat('cs-CZ',{dateStyle:'full',timeZone:'Europe/Prague'}).format(new Date());
+const locationEditor=$('#location-editor');
+const locationMap=$('#location-map');
+const locationTiles=locationMap.querySelector('.map-tiles');
+const locationConfirm=$('#location-confirm');
+const locationZoomIn=$('#location-zoom-in'), locationZoomOut=$('#location-zoom-out');
+locationMap.querySelector('.location-pin').innerHTML=icon('pin');
+let locationDraft, locationDrag;
+function renderLocationMap(){
+ if(!locationEditor.open||!locationDraft) return;
+ const {point,level}=locationDraft;
+ const w=locationMap.clientWidth, h=locationMap.clientHeight;
+ const {x,y}=project(point,level);
+ renderTiles(locationTiles,'location',level,x-w/2,y-h/2,w,h);
+ locationZoomIn.disabled=level>=19;
+ locationZoomOut.disabled=level<=3;
+ locationConfirm.disabled=!locationDraft.placed;
+}
+function moveLocationPin(dx,dy){
+ const {point,level}=locationDraft;
+ const {x,y}=project(point,level);
+ const size=256*2**level;
+ locationDraft.point={
+   lat:Math.atan(Math.sinh(Math.PI*(1-2*Math.max(0,Math.min(size,y+dy))/size)))*180/Math.PI,
+   lng:((((x+dx)%size)+size)%size)/size*360-180
+ };
+ locationDraft.placed=true;
+ renderLocationMap();
+}
+new ResizeObserver(renderLocationMap).observe(locationMap);
+locationZoomIn.addEventListener('click',()=>{locationDraft.level++;renderLocationMap();});
+locationZoomOut.addEventListener('click',()=>{locationDraft.level--;renderLocationMap();});
+locationMap.addEventListener('pointerdown',event=>{
+ if(!event.isPrimary||event.button!==0||event.target.closest('.mapcredit')) return;
+ locationDrag={id:event.pointerId,x:event.clientX,y:event.clientY,moved:false};
+ locationMap.setPointerCapture(event.pointerId);
+});
+locationMap.addEventListener('pointermove',event=>{
+ if(locationDrag?.id!==event.pointerId) return;
+ const dx=event.clientX-locationDrag.x, dy=event.clientY-locationDrag.y;
+ if(!locationDrag.moved&&Math.hypot(dx,dy)<5) return;
+ locationDrag.moved=true;
+ locationTiles.style.transform='translate('+dx+'px,'+dy+'px)';
+});
+locationMap.addEventListener('pointerup',event=>{
+ if(locationDrag?.id!==event.pointerId) return;
+ if(locationDrag.moved){
+   locationTiles.style.transform='';
+   moveLocationPin(locationDrag.x-event.clientX,locationDrag.y-event.clientY);
+ }else{
+   const bounds=locationMap.getBoundingClientRect();
+   moveLocationPin(event.clientX-bounds.left-bounds.width/2,event.clientY-bounds.top-bounds.height/2);
+ }
+ locationDrag=null;
+});
+locationMap.addEventListener('lostpointercapture',()=>{
+ locationTiles.style.transform='';
+ locationDrag=null;
+});
+locationMap.addEventListener('keydown',event=>{
+ const directions={ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,-1],ArrowDown:[0,1]};
+ if(!Object.hasOwn(directions,event.key)) return;
+ event.preventDefault();
+ const [dx,dy]=directions[event.key], step=event.shiftKey?64:16;
+ moveLocationPin(dx*step,dy*step);
+});
+function exactAddress(address,suggestions){
+ const matches=suggestions.filter(result=>validPoint(result.point)&&
+   [result.address,result.address.replace(/, \d{3} ?\d{2} /,', ')].some(label=>label.localeCompare(address,'cs',{sensitivity:'base'})===0));
+ return matches.length===1?matches[0]:null;
+}
 const selectedAddresses=new WeakMap();
+locationEditor.querySelector('form').addEventListener('submit',event=>{
+ if(event.submitter!==locationConfirm) return;
+ const {input,typed,address,point,placed}=locationDraft;
+ if(!placed||input.value.trim()!==typed){event.preventDefault();return;}
+ input.value=address;
+ selectedAddresses.set(input,{address,point});
+ locationDraft.button.textContent='Poloha upřesněna na mapě';
+});
+locationEditor.addEventListener('close',()=>{
+ if(locationEditor.open) return;
+ locationTiles.style.transform='';
+ locationDraft=null;
+ locationDrag=null;
+});
 for(const form of [$('#booking'),$('#own-ride'),$('#job-edit-form')]){
  const fields=['pickup','dropoff'].map(name=>form.elements[name]);
  for(const input of fields){
@@ -397,7 +481,40 @@ for(const form of [$('#booking'),$('#own-ride'),$('#job-edit-form')]){
    status.setAttribute('role','status');
    status.hidden=true;
    input.autocomplete='off';
-   input.closest('label').after(status,list);
+   const refine=document.createElement('button');
+   refine.type='button';
+   refine.className='refine-location';
+   const refineLabel='Upřesnit na mapě';
+   refine.textContent=refineLabel;
+   refine.setAttribute('aria-label',input.name==='pickup'?'Upřesnit vyzvednutí na mapě':'Upřesnit doručení na mapě');
+   input.closest('label').after(status,list,refine);
+   refine.addEventListener('click',async()=>{
+     const typed=input.value.trim();
+     if(!typed){input.focus();notify('Nejdříve zadejte adresu.');return;}
+     const generation=sessionGeneration;
+     const request=sequence;
+     const jobId=form.dataset.id;
+     const selected=selectedAddresses.get(input);
+     const original=form.id==='job-edit-form'?state?.jobs.find(job=>job.id===Number(jobId)):null;
+     const originalPoint=input.name==='pickup'?original?.pickupPoint:original?.target;
+     let match=selected?.address===typed?selected:null;
+     if(!match&&original?.[input.name]===typed&&validPoint(originalPoint)) match={address:typed,point:originalPoint};
+     if(!match){
+       refine.disabled=true;
+       try{match=exactAddress(typed,(await api('geocode',{address:typed})).suggestions);}
+       catch{}
+       finally{refine.disabled=false;}
+     }
+     if(!live||generation!==sessionGeneration||request!==sequence||form.dataset.id!==jobId||
+        input.value.trim()!==typed||locationEditor.open||!input.getClientRects().length) return;
+     locationDraft={input,button:refine,typed,address:match?.address??typed,point:match?.point??center,level:match?18:14,placed:Boolean(match)};
+     $('#location-address').textContent=locationDraft.address;
+     $('#location-help').textContent=(match?'':'Adresu se nepodařilo ověřit. ')+
+       'Klepněte do mapy nebo ji posuňte pod špendlíkem. Klávesnicí použijte šipky.';
+     locationEditor.showModal();
+     renderLocationMap();
+     locationMap.focus();
+   });
    const showStatus=message=>{
      status.textContent=message;
      status.hidden=!message;
@@ -410,45 +527,41 @@ for(const form of [$('#booking'),$('#own-ride'),$('#job-edit-form')]){
      list.hidden=true;
      showStatus('');
    };
-   form.addEventListener('reset',()=>{clear();selectedAddresses.delete(input);});
-   input.addEventListener('input',()=>{
+   const resetLocation=()=>{
      clear();
      selectedAddresses.delete(input);
+     refine.textContent=refineLabel;
+   };
+   form.addEventListener('reset',resetLocation);
+   input.addEventListener('input',()=>{
+     resetLocation();
      const address=input.value.trim();
      if(!live||address.length<3) return;
      const request=sequence, generation=sessionGeneration;
      timer=setTimeout(async()=>{
        showStatus('Hledám adresy…');
        try{
-         const {suggestions}=await api('geocode',{address});
+         const {suggestions:results}=await api('geocode',{address});
+         const suggestions=results.filter(result=>validPoint(result.point));
          if(request!==sequence||generation!==sessionGeneration) return;
          showStatus(suggestions.length?'':'Žádná shoda. Zkuste doplnit číslo domu nebo obec.');
          for(const result of suggestions){
            const choice=document.createElement('button');
            choice.type='button';
-           choice.textContent=result.point?result.address:result.address+' · doplňte číslo domu';
+           choice.textContent=result.address;
            choice.addEventListener('click',()=>{
-             if(result.point){
-               input.value=result.address;
-               selectedAddresses.set(input,{address:result.address,point:result.point});
-             }else{
-               const separator=result.address.lastIndexOf(', ');
-               input.value=result.address.slice(0,separator)+' '+result.address.slice(separator);
-             }
+             input.value=result.address;
+             selectedAddresses.set(input,result);
+             refine.textContent=refineLabel;
              clear();
              input.focus();
-             if(!result.point){
-               const numberPosition=input.value.lastIndexOf(', ');
-               input.setSelectionRange(numberPosition,numberPosition);
-               showStatus('Doplňte číslo domu.');
-             }
            });
            list.append(choice);
          }
          list.hidden=!list.childElementCount;
        }catch{
          if(request===sequence&&generation===sessionGeneration){
-           showStatus('Našeptávání je nedostupné. Adresu můžete zadat ručně.');
+           showStatus('Našeptávání je dočasně nedostupné. Zkuste hledání znovu.');
          }
        }
      },350);
@@ -485,34 +598,39 @@ for(const form of [$('#booking'),$('#own-ride'),$('#job-edit-form')]){
        }
        return;
      }
-     const points=await Promise.all(fields.map(async input=>{
-       if(!f[input.name]) return undefined;
+     const original=editing?state.jobs.find(job=>job.id===id):null;
+     const locations=await Promise.all(fields.map(async input=>{
+       const typed=f[input.name].trim();
        const selected=selectedAddresses.get(input);
-       if(selected?.address===f[input.name]) return selected.point;
-       const original=editing?state.jobs.find(job=>job.id===id):null;
-       const originalPoint=input.name==='pickup'?original?.pickupPoint:original?.target;
-       if(originalPoint&&original[input.name]===f[input.name].trim()) return originalPoint;
-       try{
-         const {suggestions}=await api('geocode',{address:f[input.name]});
-         const typed=f[input.name].trim();
-         const matches=suggestions.filter(({address,point})=>point&&
-           [address,address.replace(/, \d{3} ?\d{2} /,', ')].some(label=>label.localeCompare(typed,'cs',{sensitivity:'base'})===0));
-         return matches.length===1?matches[0].point:undefined;
-       }catch{ return undefined; }
+       if(selected?.address===typed) return selected;
+       if(original?.[input.name]===typed){
+         return {address:typed,point:input.name==='pickup'?original.pickupPoint:original.target};
+       }
+       const {suggestions}=await api('geocode',{address:typed});
+       return exactAddress(typed,suggestions);
      }));
-     if(generation!==sessionGeneration) return;
-     const [pickupPoint,target]=points;
-     const ok=await perform({type,id,...f,cents:Math.round(Number(f.price)*100),pickupPoint,target});
+     if(generation!==sessionGeneration||fields.some(input=>input.value!==f[input.name])||
+        (editing&&(!$('#job-editor').open||Number(form.dataset.id)!==id||form.dataset.action!==type))) return;
+     const missing=locations.indexOf(null);
+     if(missing!==-1){
+       fields[missing].focus();
+       notify(missing===0?'Vyberte přesnou adresu vyzvednutí z nabídky.':'Vyberte přesnou adresu doručení z nabídky.');
+       return;
+     }
+     const [pickup,dropoff]=locations;
+     const ok=await perform({type,id,...f,cents:Math.round(Number(f.price)*100),pickup:pickup.address,dropoff:dropoff.address,pickupPoint:pickup.point,target:dropoff.point});
      if(ok){
        form.reset();
        if(editing){
          $('#job-editor').close();
-         notify(pickupPoint&&target?'Údaje zakázky uloženy.':'Údaje zakázky uloženy. U některé adresy chybí GPS souřadnice.');
+         notify('Údaje zakázky uloženy.');
          return;
        }
        if(!ownRide){queue='waiting';render();}
-       notify(pickupPoint&&target?'Zakázka vytvořena.':'Zakázka vytvořena. U některé adresy chybí GPS souřadnice.');
+       notify('Zakázka vytvořena.');
      }
+   }catch(error){
+     if(generation===sessionGeneration) notify(error.message||'Adresu se nepodařilo ověřit.');
    }finally{submit.disabled=false;}
  });
 }

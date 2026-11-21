@@ -92,3 +92,14 @@
 #vehicle-options button { display: flex; align-items: center; gap: 8px; text-align: left; }
 .inline-choice { display: flex; align-items: center; gap: 7px; }
 .inline-choice input { width: 18px; height: 18px; margin: 0; }
+
+.refine-location { justify-self: start; padding: 5px 9px; }
+#location-editor { width: min(690px, 95vw); max-height: 95dvh; }
+#location-map { position: relative; height: clamp(180px, 48dvh, 480px); overflow: hidden; background: #e6ebea; border-radius: 8px; touch-action: none; cursor: grab; }
+#location-map:active { cursor: grabbing; }
+#location-map:focus-visible { outline: 3px solid #6691ff; }
+#location-map .map-tiles { position: absolute; inset: 0; pointer-events: none; }
+#location-map .map-tiles img { position: absolute; width: 256px; height: 256px; }
+.location-pin { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -87.5%); color: #b91c1c; filter: drop-shadow(0 1px 2px white); pointer-events: none; }
+.location-pin svg { display: block; width: 36px; height: 36px; fill: none; stroke: currentColor; stroke-width: 2; }
+.location-actions { flex-wrap: wrap; }
