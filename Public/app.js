@@ -47,6 +47,31 @@ function notify(msg){
  const t=$('#toast'); t.textContent=msg; t.className='visible';
  clearTimeout(notify.timer); notify.timer=setTimeout(()=>t.className='',4200);
 }
+let rideAudio;
+async function enableRideAudio(){
+ const AudioContext=window.AudioContext||window.webkitAudioContext;
+ if(!AudioContext) return false;
+ try{
+   rideAudio??=new AudioContext();
+   if(rideAudio.state!=='running') await rideAudio.resume();
+   return rideAudio.state==='running';
+ }catch{return false;}
+}
+function chimeRide(){
+ if(rideAudio?.state!=='running') return;
+ for(const [frequency,delay] of [[660,0],[880,.15],[1100,.30]]){
+   const start=rideAudio.currentTime+delay;
+   const note=rideAudio.createOscillator(), volume=rideAudio.createGain();
+   note.type='sine';
+   note.frequency.value=frequency;
+   volume.gain.setValueAtTime(0,start);
+   volume.gain.linearRampToValueAtTime(.22,start+.02);
+   volume.gain.exponentialRampToValueAtTime(.001,start+.24);
+   note.connect(volume).connect(rideAudio.destination);
+   note.start(start);
+   note.stop(start+.25);
+ }
+}
 async function api(path,body){
  const r=await fetch('/api/'+path,{method:body?'POST':'GET',headers:body?{'Content-Type':'application/json'}:{},body:body&&JSON.stringify(body),cache:'no-store'});
  const data=await r.json();
@@ -76,10 +101,17 @@ function receive(data){
    selected=''; incoming=null;
  }
  const active=can('driverRide')?busy(state,actor):null;
- if(active?.status==='assigned'&&incoming!==active.id){incoming=active.id; notify('Nová zakázka č. '+active.id); navigator.vibrate?.([150,80,150]);}
+ const newRide=active?.status==='assigned'&&incoming!==active.id;
+ if(newRide){
+   incoming=active.id;
+   page='driver';
+   notify('Nová zakázka č. '+active.id);
+   chimeRide();
+   navigator.vibrate?.([150,80,150]);
+ }else if(active?.status!=='assigned') incoming=null;
  if(fleetHistory()&&can('history')&&data.state.jobs.filter(j=>j.status==='done').length>noticeCount&&wasLive) notify('Zakázka dokončena.');
  noticeCount=state.jobs.filter(j=>j.status==='done').length;
- if(jobsChanged||otherChanged||permissionsChanged||vehicleChanged||previous!==actor) render();
+ if(newRide||jobsChanged||otherChanged||permissionsChanged||vehicleChanged||previous!==actor) render();
  else if(page==='dispatch'){stats();renderMap();}
  else if(page==='driver'){stats();renderDriverMap();}
 }
@@ -230,21 +262,29 @@ function renderHistory(){
 function navigate(address){
  return 'https://www.google.com/maps/dir/?api=1&travelmode=driving&dir_action=navigate&destination='+encodeURIComponent(address);
 }
-function driverNavigation(job){
- const toDropoff=job.status==='onboard';
+function driverNavigationUrl(job,toDropoff){
  const point=toDropoff?job.target:job.pickupPoint;
- const address=point?point.lat+','+point.lng:toDropoff?job.dropoff:job.pickup;
- const label=toDropoff?'Navigovat na místo doručení':'Navigovat k zákazníkovi';
- return '<a target="_blank" rel="noopener" href="'+esc(navigate(address))+'">'+label+'</a>';
+ const address=validPoint(point)?point.lat+','+point.lng:toDropoff?job.dropoff:job.pickup;
+ return navigate(address);
+}
+function driverActions(job){
+ const tile=(action,label,symbol,style)=>'<button type="button" class="ride-tile '+style+
+   '" data-drive="'+action+'" data-id="'+job.id+'">'+icon(symbol)+esc(label)+'</button>';
+ const navigation=(toDropoff,label)=>'<a class="ride-tile ride-navigation" target="_blank" rel="noopener" href="'+
+   esc(driverNavigationUrl(job,toDropoff))+'">'+icon('map')+esc(label)+'</a>';
+ if(job.status==='assigned') return tile('accept','Přijmout','check','ride-accept');
+ if(job.status==='accepted') return navigation(false,'Navigovat k zákazníkovi')+
+   tile('pickup','Zákazník vyzvednut','person','ride-pickup');
+ return tile('complete','Hotovo','check','ride-complete')+navigation(true,'Otevřít navigaci do cíle');
 }
 function renderDriver(){
  const j=busy(state,actor);
- const action=j&&({assigned:['accept','Přijmout zakázku'],accepted:['pickup','Zákazník vyzvednut'],onboard:['complete','Doručeno']}[j.status]);
  const pos=state.positions[actor];
  const gpsStatus=gpsText||(fresh(pos)?'GPS přesnost ±'+Math.round(pos.accuracy)+' m':'Poloha se nesdílí.');
  $('#own-ride fieldset').disabled=Boolean(j);
  $('#own-ride-status').hidden=!j;
- $('#driver-summary').innerHTML='<div class="drivergrid"><div><section class="panel detail"><h2>Aktuální zakázka</h2>'+(j?'<p><b>#'+j.id+' · '+esc(j.name)+' · '+cash(j.cents)+'</b></p><p>'+statusText[j.status]+(j.scheduled?' · '+scheduledJob(j):'')+'</p>'+jobRoute(j)+(j.note?'<p>'+esc(j.note)+'</p>':'')+'<div class="actions">'+(j.status!=='assigned'?driverNavigation(j):'')+'<button class="primary" data-drive="'+action[0]+'" data-id="'+j.id+'">'+action[1]+'</button></div>':'<p>Čekáte na novou zakázku od dispečera.</p>')+'</section></div><div><section class="panel detail"><h2>Dostupnost</h2><div class="actions"><button data-availability aria-pressed="'+Boolean(state.occupied?.[actor])+'" '+(j?'disabled':'')+'>'+(state.occupied?.[actor]?'Nastavit jako volný':'Nastavit jako obsazený')+'</button></div></section><section class="panel detail"><h2>Sdílení polohy</h2><p>'+esc(gpsStatus)+'</p><div class="actions"><button data-gps>'+ (gps===null?'Zapnout GPS':'Zastavit GPS')+'</button></div></section><section class="panel detail"><h2>Dnešní jízdy</h2><div class="actions"><button data-page="history">Otevřít denní přehled</button></div></section></div></div>';
+ $('#driver-summary').innerHTML='<div class="drivergrid"><div><section class="panel detail ride-panel"><h2>'+(j?.status==='assigned'?'Nová zakázka':'Aktuální zakázka')+'</h2>'+(j?'<p><b>#'+j.id+' · '+esc(j.name)+' · '+cash(j.cents)+'</b></p><p>'+statusText[j.status]+(j.scheduled?' · '+scheduledJob(j):'')+'</p>'+jobRoute(j)+(j.note?'<p>'+esc(j.note)+'</p>':'')+'<div class="ride-actions">'+driverActions(j)+'</div>':'<p>Čekáte na novou zakázku od dispečera.</p>')+
+   '<button type="button" class="ride-sound" data-ride-sound>'+(rideAudio?.state==='running'?'Vyzkoušet zvuk':'Zapnout zvuk zakázek')+'</button></section></div><div><section class="panel detail"><h2>Dostupnost</h2><div class="actions"><button data-availability aria-pressed="'+Boolean(state.occupied?.[actor])+'" '+(j?'disabled':'')+'>'+(state.occupied?.[actor]?'Nastavit jako volný':'Nastavit jako obsazený')+'</button></div></section><section class="panel detail"><h2>Sdílení polohy</h2><p>'+esc(gpsStatus)+'</p><div class="actions"><button data-gps>'+ (gps===null?'Zapnout GPS':'Zastavit GPS')+'</button></div></section><section class="panel detail"><h2>Dnešní jízdy</h2><div class="actions"><button data-page="history">Otevřít denní přehled</button></div></section></div></div>';
  const summary=$('#driver-summary');
  summary.querySelector('section').hidden=!can('driverRide');
  for(const [selector,permission] of [['[data-availability]','availability'],['[data-gps]','gps'],['[data-page="history"]','history']]){
@@ -764,8 +804,27 @@ document.addEventListener('click',async e=>{
    if(await perform({type:'assign',id:Number(d.job),driver:selected})) notify('Zakázka přiřazena · '+name);
    return;
  }
+ if(d.rideSound!==undefined&&can('driverRide')){
+   if(await enableRideAudio()){
+     chimeRide();
+     b.textContent='Vyzkoušet zvuk';
+   }else notify('Zvuk se nepodařilo zapnout.');
+   return;
+ }
  if(d.drive&&can('driverRide')){
-   if(await perform({type:d.drive,id:Number(d.id)})) notify({accept:'Zakázka přijata.',pickup:'Vyzvednutí potvrzeno.',complete:'Jízda dokončena.'}[d.drive]);
+   const job=busy(state,actor);
+   const id=Number(d.id);
+   if(job?.id!==id||pending) return;
+   b.disabled=true;
+   try{
+     if(await perform({type:d.drive,id})){
+       notify({accept:'Zakázka přijata.',pickup:'Vyzvednutí potvrzeno.',complete:'Jízda dokončena.'}[d.drive]);
+       const updated=busy(state,actor);
+       if(d.drive==='pickup'&&updated?.id===id&&updated.status==='onboard'){
+         window.location.assign(driverNavigationUrl(updated,true));
+       }
+     }
+   }finally{b.disabled=false;}
    return;
  }
  if(d.availability!==undefined&&can('availability')){
@@ -812,6 +871,7 @@ $('#loginform').addEventListener('submit',async e=>{
  e.preventDefault();
  const f=e.currentTarget;
  const submit=f.querySelector('button');
+ void enableRideAudio();
  submit.disabled=true;
  try{
    const {username,password}=Object.fromEntries(new FormData(f));

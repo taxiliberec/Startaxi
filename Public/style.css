@@ -108,3 +108,16 @@
 .job-timestamp { white-space: nowrap; }
 .scheduled-job { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; vertical-align: middle; }
 .scheduled-job svg { width: 15px; height: 15px; flex: none; color: #b91c1c; stroke: currentColor; stroke-width: 2; fill: none; }
+
+.ride-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); gap: 12px; margin-top: 16px; }
+.ride-panel .ride-tile { display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 68px; padding: 14px; border: 1px solid transparent; border-radius: 14px; color: white; text-align: center; text-decoration: none; font-size: 1.12rem; font-weight: 750; }
+.ride-tile svg { width: 24px; height: 24px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.ride-panel .ride-accept { min-height: 88px; background: linear-gradient(115deg, #075a36, #087549); font-size: 1.45rem; animation: ride-arrival .45s ease-out, ride-pulse 2.4s ease-out .55s 3; }
+.ride-panel .ride-pickup, .ride-panel .ride-complete { background: #087549; }
+.ride-panel .ride-navigation { background: #224caa; }
+.ride-panel .ride-tile:hover { filter: brightness(1.08); }
+.ride-panel .ride-tile:focus-visible { outline: 3px solid #285de4; outline-offset: 3px; }
+.ride-sound { margin-top: 14px; }
+@keyframes ride-arrival { from { opacity: .55; transform: translateY(6px) scale(.98); } to { opacity: 1; transform: none; } }
+@keyframes ride-pulse { 0%, 65%, 100% { box-shadow: 0 0 0 0 transparent; } 12% { box-shadow: 0 0 0 4px #15865366; } 60% { box-shadow: 0 0 0 10px #15865300; } }
+@media (prefers-reduced-motion: reduce) { .ride-panel .ride-accept { animation: none; } }
