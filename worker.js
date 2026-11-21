@@ -2,10 +2,10 @@ import {change,busy,drivers,fleet,isOwner,employeeRole,permissionsFor,availableP
 import assets from './assets.generated.js';
 
 const json=(payload,status=200,headers={})=>Response.json(payload,{status,headers:{'Cache-Control':'no-store',...headers}});
-const decode=async request=>{
+const decode=async (request,limit=6000)=>{
   if(!request.headers.get('content-type')?.startsWith('application/json')) throw Error('Neplatný formát.');
   const raw=await request.text();
-  if(raw.length>6000) throw Error('Požadavek je příliš dlouhý.');
+  if(raw.length>limit) throw Error('Požadavek je příliš dlouhý.');
   return JSON.parse(raw);
 };
 async function hash(value){
@@ -76,8 +76,21 @@ function employeeDirectory(state,users){
     const fallback=drivers.find(driver=>driver.id===id)?.name;
     const [firstName='',lastName='']=(fallback||'').split(' ');
     return {...publicProfile(account??{id,firstName,lastName,username:id}),
-      role:employeeRole(state,id),permissions:permissionsFor(state,id)};
+      role:employeeRole(state,id),permissions:permissionsFor(state,id),vehicleId:assignedVehicle(state,id)?.id};
   }).sort((a,b)=>a.lastName.localeCompare(b.lastName,'cs')||a.firstName.localeCompare(b.firstName,'cs')||a.username.localeCompare(b.username));
+}
+const publicVehicle=({id,make,model,photo})=>({id,make,model,hasPhoto:Boolean(photo)});
+const assignedVehicle=(state,id)=>state.vehicles?.[state.vehicleAssignments?.[id]];
+function vehicleFields(input){
+  const make=cleanName(input.make), model=cleanName(input.model);
+  if(make.length>80||model.length>80) throw Error('Značka a model mohou mít nejvýše 80 znaků.');
+  return {make,model};
+}
+function vehiclePhoto(photo){
+  if(typeof photo!=='string'||photo.length>112000||!/^data:image\/jpeg;base64,\/9j\/[A-Za-z0-9+/]+={0,2}$/.test(photo)){
+    throw Error('Fotografii vozidla se nepodařilo uložit.');
+  }
+  return photo;
 }
 function view(state,actor,revision,users){
   const permissions=permissionsFor(state,actor);
@@ -115,7 +128,12 @@ function view(state,actor,revision,users){
   const account=storedAccount(state,actor);
   const profile=account?{...publicProfile(account),configured:true}:{id:actor,username:actor,firstName:'',lastName:'',configured:false};
   const showFleet=can('fleetMap')||can('dispatchJobs')||(can('history')&&allHistory);
-  return {actor,revision,profile,role,permissions,state:permitted,drivers:fleet(state).filter(d=>showFleet||d.id===actor)};
+  const visibleDrivers=fleet(state).filter(d=>showFleet||d.id===actor).map(driver=>({
+    ...driver,vehicleId:(can('fleetMap')||driver.id===actor)?assignedVehicle(state,driver.id)?.id:undefined
+  }));
+  const vehicles=isOwner(actor)?Object.values(state.vehicles||{}):[...new Set(visibleDrivers.map(driver=>driver.vehicleId))]
+    .flatMap(id=>state.vehicles?.[id]?[state.vehicles[id]]:[]);
+  return {actor,revision,profile,role,permissions,state:permitted,drivers:visibleDrivers,vehicles:vehicles.map(publicVehicle)};
 }
 const hex=bytes=>Array.from(new Uint8Array(bytes),b=>b.toString(16).padStart(2,'0')).join('');
 async function passwordHash(password,salt){
@@ -231,6 +249,45 @@ async function handleApi(request,env,path){
       }
     });
     return json(view(state,actor,revision,users),200,secret?{'Set-Cookie':cookie(secret,43200)}:{});
+  }
+  if(path.startsWith('vehicle-photo/')&&request.method==='GET'){
+    const id=path.slice('vehicle-photo/'.length);
+    const vehicle=Object.hasOwn(current.state.vehicles||{},id)?current.state.vehicles[id]:null;
+    const authorized=isOwner(actor)||assignedVehicle(current.state,actor)?.id===id||
+      (allows(permissionsFor(current.state,actor),'fleetMap')&&Object.values(current.state.vehicleAssignments||{}).includes(id));
+    if(!authorized||!vehicle?.photo) return json({error:'Fotografie není dostupná.'},404);
+    return new Response(Uint8Array.from(atob(vehicle.photo.split(',')[1]),character=>character.charCodeAt(0)),{
+      headers:{'Content-Type':'image/jpeg','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}
+    });
+  }
+  if(['vehicles','vehicle-assignment'].includes(path)&&request.method==='POST'){
+    if(!isOwner(actor)) return json({error:'Přístup zamítnut.'},403);
+    const input=await decode(request,path==='vehicles'?119000:6000);
+    const id=path==='vehicles'&&input.id===''?crypto.randomUUID():input.id;
+    const fields=path==='vehicles'?vehicleFields(input):null;
+    const photo=input.photo===undefined||input.photo===''?input.photo:vehiclePhoto(input.photo);
+    const {state,revision}=await updateState(env.DB,s=>{
+      checkSession(s);
+      if(path==='vehicles'){
+        const records=(s.vehicles??={});
+        if(input.id!==''&&!Object.hasOwn(records,id)) throw Error('Vozidlo nebylo nalezeno.');
+        records[id]={id,...fields,photo:photo??records[id]?.photo};
+        return;
+      }
+      const employee=employeeDirectory(s,users).find(entry=>entry.id===id&&entry.role==='driver');
+      if(!employee) throw Error('Řidič nebyl nalezen.');
+      const assignments=(s.vehicleAssignments??={});
+      if(input.vehicleId===''){
+        delete assignments[id];
+        return;
+      }
+      if(!Object.hasOwn(s.vehicles||{},input.vehicleId)) throw Error('Vozidlo nebylo nalezeno.');
+      if(Object.entries(assignments).some(([driverId,vehicleId])=>driverId!==id&&vehicleId===input.vehicleId)){
+        throw Error('Vozidlo je už přiřazené jinému řidiči.');
+      }
+      assignments[id]=input.vehicleId;
+    });
+    return json(view(state,actor,revision,users));
   }
   if(['drivers','employees','owners','employee-permissions'].includes(path)&&request.method==='POST'){
     if(!isOwner(actor)) return json({error:'Přístup zamítnut.'},403);

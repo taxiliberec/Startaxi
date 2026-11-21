@@ -54,11 +54,12 @@ createServer(async (req,res)=>{
       res.writeHead(200,{'Cache-Control':'no-store'}).end('OK');
       return;
     }
+    const bodyLimit=req.method==='POST'&&req.url==='/api/vehicles'?120000:16000;
     const chunks=[];
     let length=0;
     for await(const chunk of req){
       length+=chunk.length;
-      if(length>16000){res.writeHead(413).end();return;}
+      if(length>bodyLimit){res.writeHead(413).end();return;}
       chunks.push(chunk);
     }
     const scheme=process.env.TAXI_PROXY_HTTPS==='1'?'https':'http';
