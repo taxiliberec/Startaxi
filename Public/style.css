@@ -24,3 +24,29 @@
 #loginbox form{width:min(100%,420px);background:white;border-radius:16px;padding:24px;color:#192438}
 #loginbox h1{text-align:center;font-size:1.4rem;margin:0 0 20px}
 #loginbox .actions button{width:100%}
+
+#own-ride fieldset { display:grid; gap:11px; padding:0; margin:0; border:0; min-width:0; }
+#own-ride { padding-inline:0; }
+.address-suggestions { display:grid; gap:4px; }
+.address-suggestions[hidden] { display:none; }
+.address-suggestions button { text-align:left; min-height:42px; }
+.stop-marker { width:27px; height:27px; border-radius:50%; pointer-events:auto; z-index:1; }
+.stop-marker svg { width:16px; height:16px; }
+.pickup-marker { background:#315abe; }
+.marker[data-car] { z-index:2; }
+.maptools, .mapcredit { z-index:3; }
+.mapcredit a { color:inherit; }
+.vehicle-status { padding:8px 14px 0; margin:0; font-size:13px; }
+.vehicle-status:empty { display:none; }
+
+.job-card { position:relative; }
+.job-card .job { width:100%; }
+.job-card .jobtop { padding-right:38px; }
+.job-menu { position:absolute; right:10px; top:9px; z-index:4; }
+.job-menu[open] { z-index:5; }
+.job-menu summary { display:grid; place-items:center; width:34px; height:32px; cursor:pointer; border:1px solid var(--line); border-radius:8px; background:white; font-weight:700; list-style:none; }
+.job-menu summary::-webkit-details-marker { display:none; }
+.job-menu > div { display:grid; position:absolute; right:0; width:max-content; background:white; border:1px solid var(--line); border-radius:8px; padding:4px; box-shadow:0 3px 12px #13264530; }
+.job-menu button { text-align:left; border:0; }
+#job-edit-form fieldset { border:0; margin:0; padding:0; min-width:0; }
+#job-edit-form fieldset:not([hidden]) { display:grid; gap:10px; }

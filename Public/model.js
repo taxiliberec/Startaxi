@@ -34,17 +34,50 @@ export function change(s,actor,a,now=Date.now()){
   const job=s.jobs.find(j=>j.id===a.id);
   const own=job && job.driver===actor;
   switch(a.type){
+    case 'createOwn':
     case 'create': {
-      requireThat(managesFleet(actor),'Přístup zamítnut.');
-      const {name,pickup,dropoff,note='',scheduled='',cents,target}=a;
-      for(const [v,max] of [[name,120],[pickup,200],[dropoff,200]]) requireThat(typeof v==='string'&&v.trim()&&v.length<=max,'Vyplňte povinné údaje.');
+      const ownRide=a.type==='createOwn';
+      requireThat(ownRide ? fleet(s).some(d=>d.id===actor) : managesFleet(actor),'Přístup zamítnut.');
+      if(ownRide){
+        requireThat(!busy(s,actor),'Nejdříve dokončete aktuální zakázku.');
+        requireThat([a.firstName,a.lastName].every(v=>typeof v==='string'&&v.trim()&&v.length<=60),'Vyplňte jméno a příjmení.');
+      }
+      const {pickup,dropoff,note='',scheduled='',cents,target,pickupPoint}=a;
+      const name=ownRide ? a.firstName.trim()+' '+a.lastName.trim() : a.name;
+      for(const [v,max] of [[name,121],[pickup,200],[dropoff,200]]) requireThat(typeof v==='string'&&v.trim()&&v.length<=max,'Vyplňte povinné údaje.');
       requireThat(typeof note==='string'&&note.length<=1000&&typeof scheduled==='string'&&(!scheduled||/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(scheduled))&&Number.isInteger(cents)&&cents>=0&&cents<=10000000,'Zkontrolujte čas, poznámku a cenu.');
-      requireThat(!target || validPoint(target),'Neplatný cíl.');
-      s.jobs.unshift({id:++s.seq,name:name.trim(),pickup:pickup.trim(),dropoff:dropoff.trim(),note,scheduled,cents,target,created:now,status:'waiting'});
+      requireThat([target,pickupPoint].every(p=>p==null||validPoint(p)),'Neplatné souřadnice adresy.');
+      s.jobs.unshift({id:++s.seq,name:name.trim(),pickup:pickup.trim(),dropoff:dropoff.trim(),note,scheduled,cents,target,pickupPoint,created:now,...(ownRide?{driver:actor,status:'accepted',ownRide:true}:{status:'waiting'})});
       break;
     }
+    case 'cancelJob':
+    case 'editPickupTime':
+    case 'editJob': {
+      requireThat(managesFleet(actor)&&job&&['waiting','assigned','accepted','onboard'].includes(job.status),'Zakázku už nelze upravit.');
+      if(a.type==='cancelJob'){
+        Object.assign(job,{status:'cancelled',cancelled:now});
+      }else if(a.type==='editPickupTime'){
+        requireThat(typeof a.scheduled==='string'&&(!a.scheduled||/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(a.scheduled)),'Zkontrolujte čas vyzvednutí.');
+        job.scheduled=a.scheduled;
+      }else{
+        const {name,pickup,dropoff,note='',cents,target,pickupPoint}=a;
+        for(const [value,max] of [[name,120],[pickup,200],[dropoff,200]]) requireThat(typeof value==='string'&&value.trim()&&value.length<=max,'Vyplňte povinné údaje.');
+        requireThat(typeof note==='string'&&note.length<=1000&&Number.isInteger(cents)&&cents>=0&&cents<=10000000,'Zkontrolujte poznámku a cenu.');
+        requireThat([target,pickupPoint].every(p=>p==null||validPoint(p)),'Neplatné souřadnice adresy.');
+        Object.assign(job,{name:name.trim(),pickup:pickup.trim(),dropoff:dropoff.trim(),note,cents,
+          pickupPoint:pickup.trim()===job.pickup?(pickupPoint??job.pickupPoint):pickupPoint,
+          target:dropoff.trim()===job.dropoff?(target??job.target):target});
+      }
+      break;
+    }
+    case 'availability':
+      requireThat(fleet(s).some(d=>d.id===actor)&&typeof a.occupied==='boolean','Neplatný stav vozidla.');
+      s.occupied??={};
+      if(a.occupied) s.occupied[actor]=true;
+      else delete s.occupied[actor];
+      break;
     case 'assign':
-      requireThat(managesFleet(actor)&&job?.status==='waiting'&&fleet(s).some(d=>d.id===a.driver)&&!busy(s,a.driver),'Řidič nebo zakázka už nejsou k dispozici.');
+      requireThat(managesFleet(actor)&&job?.status==='waiting'&&fleet(s).some(d=>d.id===a.driver)&&!busy(s,a.driver)&&!s.occupied?.[a.driver],'Řidič nebo zakázka už nejsou k dispozici.');
       Object.assign(job,{driver:a.driver,status:'assigned'});
       break;
     case 'accept':
