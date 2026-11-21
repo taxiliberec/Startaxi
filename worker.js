@@ -34,13 +34,26 @@ async function read(db){
   }
   return {revision:row.revision,state:JSON.parse(row.data)};
 }
+function activePosition(state,id,now){
+  const position=state.positions[id];
+  if(!position||position.time<=now-45000) return null;
+  const active=state.sessions?.[position.sessionId];
+  return position.sessionId==='legacy'||(active?.actor===id&&active.expires>now)?position:null;
+}
 function view(state,actor,revision){
   const directory=fleet(state);
-  const {jobs,positions,shifts}=state;
+  const {jobs,shifts,occupied={}}=state;
+  const now=Date.now();
+  const positions=Object.fromEntries(Object.keys(state.positions).flatMap(id=>{
+    const active=activePosition(state,id,now);
+    if(!active) return [];
+    const {sessionId,...position}=active;
+    return [[id,position]];
+  }));
   const permitted=managesFleet(actor)
-    ? {jobs,positions,shifts,...(actor==='owner'?{activity:state.activity||[]}:{}),
+    ? {jobs,positions,shifts,occupied,...(actor==='owner'?{activity:state.activity||[]}:{}),
       employees:Object.values(state.employees||{}).map(({id,firstName,lastName,username})=>({id,firstName,lastName,username}))}
-    : {jobs:jobs.filter(j=>j.driver===actor),positions:{[actor]:positions[actor]},shifts:shifts.filter(s=>s.driver===actor)};
+    : {jobs:jobs.filter(j=>j.driver===actor),positions:{[actor]:positions[actor]},occupied:{[actor]:Boolean(occupied[actor])},shifts:shifts.filter(s=>s.driver===actor)};
   return {actor,revision,state:permitted,drivers:managesFleet(actor)?directory:directory.filter(d=>d.id===actor)};
 }
 const hex=bytes=>Array.from(new Uint8Array(bytes),b=>b.toString(16).padStart(2,'0')).join('');
@@ -97,7 +110,11 @@ async function handleApi(request,env,path){
   const active=current?.state.sessions?.[digest];
   const actor=legacy||((active?.expires>Date.now())?active.actor:null);
   if(path==='logout'&&request.method==='POST'){
-    if(active) await updateState(env.DB,state=>{delete state.sessions[digest];});
+    if(active||legacy) await updateState(env.DB,state=>{
+      if(active) delete state.sessions[digest];
+      const driver=active?.actor||legacy;
+      if(state.positions[driver]?.sessionId===(legacy?'legacy':digest)) delete state.positions[driver];
+    });
     return json({ok:true},200,{'Set-Cookie':cookie('',0)});
   }
   if(!actor) return json({error:'Přihlaste se.'},401);
@@ -125,25 +142,42 @@ async function handleApi(request,env,path){
     });
     return json(view(state,actor,revision),201);
   }
-  if(path==='geocode'&&request.method==='POST'&&managesFleet(actor)){
+  if(path==='geocode'&&request.method==='POST'){
     const {address}=await decode(request);
-    if(typeof address!=='string'||!address.trim()||address.length>200) return json({target:null});
+    if(typeof address!=='string'||address.trim().length<3||address.length>200) return json({suggestions:[]});
     const endpoint=new URL('https://photon.komoot.io/api/');
-    endpoint.search=new URLSearchParams({q:address,lat:'50.7695',lon:'15.0514',bbox:'14.84,50.63,15.31,50.91',limit:'1'});
+    endpoint.search=new URLSearchParams({q:address,lat:'50.7695',lon:'15.0514',limit:'8',layer:'house'});
     const r=await fetch(endpoint,{signal:AbortSignal.timeout(2500)});
-    if(!r.ok) return json({target:null});
+    if(!r.ok) return json({suggestions:[]});
     const result=await r.json();
-    const point=result.features?.[0]?.geometry?.coordinates;
-    return json({target:point?{lat:point[1],lng:point[0]}:null});
+    const suggestions=(result.features??[]).flatMap(({properties:p,geometry})=>{
+      const [lng,lat]=geometry?.coordinates??[];
+      if(!Number.isFinite(lat)||!Number.isFinite(lng)||!p?.housenumber||p.countrycode?.toUpperCase()!=='CZ') return [];
+      const street=[p.street||p.name,p.housenumber].filter(Boolean).join(' ');
+      return [{address:[street,p.city||p.town||p.village||p.county].filter(Boolean).join(', '),point:{lat,lng}}];
+    });
+    return json({suggestions});
   }
   if(path==='action'&&request.method==='POST'){
     const action=await decode(request);
     const {state,revision}=await updateState(env.DB,s=>{
-      if(action.type==='assign'&&(!s.positions[action.driver]||Date.now()-s.positions[action.driver].time>45000)) throw Error('Řidič nesdílí aktuální polohu.');
+      const sessionId=legacy?'legacy':digest;
+      if(!legacy&&!(s.sessions?.[digest]?.expires>Date.now())) throw Error('Přihlaste se.');
+      if(action.type==='gpsStop'){
+        if(s.positions[actor]?.sessionId!==sessionId) return false;
+        delete s.positions[actor];
+        return;
+      }
+      if(action.type==='assign'&&!activePosition(s,action.driver,Date.now())) throw Error('Řidič nesdílí aktuální polohu.');
       const previous=s.positions[actor];
       change(s,actor,action);
-      if(action.type==='gps') return previous!==s.positions[actor];
-      record(s,actor,action.type,action.type==='create'?s.seq:action.id??action.date);
+      if(action.type==='gps'){
+        if(previous===s.positions[actor]) return false;
+        s.positions[actor].sessionId=sessionId;
+        return;
+      }
+      if(action.type==='availability') return;
+      record(s,actor,action.type,['create','createOwn'].includes(action.type)?s.seq:action.id??action.date);
     });
     return json(view(state,actor,revision));
   }
