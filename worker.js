@@ -1,4 +1,4 @@
-import {change,drivers,fleet,managesFleet} from './public/model.js';
+import {change,drivers,fleet,isOwner,managesFleet} from './public/model.js';
 import assets from './assets.generated.js';
 
 const json=(payload,status=200,headers={})=>Response.json(payload,{status,headers:{'Cache-Control':'no-store',...headers}});
@@ -15,7 +15,7 @@ async function hash(value){
 function accounts(env){
   const configured=JSON.parse(env.TAXI_ACCESS_KEYS||'{}');
   if(env.TAXI_OWNER_KEY) configured.owner=env.TAXI_OWNER_KEY;
-  return Object.entries(configured).filter(([id,key])=>(managesFleet(id)||drivers.some(d=>d.id===id))&&typeof key==='string'&&key.length>=24);
+  return Object.entries(configured).filter(([id,key])=>(['owner','dispatch'].includes(id)||drivers.some(d=>d.id===id))&&typeof key==='string'&&key.length>=24);
 }
 async function session(key){return hash('taxi-liberec/session/v1/'+key);}
 const cookie=(token,maxAge)=>'taxi_session='+token+'; Max-Age='+maxAge+'; Path=/; Secure; HttpOnly; SameSite=Strict';
@@ -40,6 +40,32 @@ function activePosition(state,id,now){
   const active=state.sessions?.[position.sessionId];
   return position.sessionId==='legacy'||(active?.actor===id&&active.expires>now)?position:null;
 }
+const storedAccount=(state,id)=>state.employees?.[id]??state.profiles?.[id];
+const registeredAccounts=state=>[...Object.values(state.employees||{}),...Object.values(state.profiles||{})];
+const publicProfile=({id,firstName,lastName,username})=>({id,firstName,lastName,username});
+const normalizeUsername=value=>typeof value==='string'?value.trim().toLowerCase():'';
+const cleanName=value=>typeof value==='string'?value.trim():'';
+const validPassword=value=>typeof value==='string'&&value.length>=12&&value.length<=128;
+function profileInput(input){
+  const firstName=cleanName(input.firstName), lastName=cleanName(input.lastName);
+  const username=normalizeUsername(input.username);
+  if(!firstName||!lastName||firstName.length>80||lastName.length>80||!/^[a-z0-9._-]{2,40}$/.test(username)){
+    throw Error('Vyplňte jméno, příjmení a platné přihlašovací jméno.');
+  }
+  return {firstName,lastName,username};
+}
+function checkUsername(state,users,username,actor){
+  if(registeredAccounts(state).some(account=>account.id!==actor&&account.username===username)||
+     ['owner','dispatch',...drivers.map(driver=>driver.id)].some(id=>id!==actor&&id===username)||
+     users.some(([id])=>id!==actor&&id===username)){
+    throw Error('Přihlašovací jméno už existuje nebo je vyhrazené.');
+  }
+}
+async function newPassword(password){
+  if(!validPassword(password)) throw Error('Heslo musí mít 12 až 128 znaků.');
+  const salt=hex(crypto.getRandomValues(new Uint8Array(16)));
+  return {salt,digest:await passwordHash(password,salt)};
+}
 function view(state,actor,revision){
   const directory=fleet(state);
   const {jobs,shifts,occupied={}}=state;
@@ -51,10 +77,12 @@ function view(state,actor,revision){
     return [[id,position]];
   }));
   const permitted=managesFleet(actor)
-    ? {jobs,positions,shifts,occupied,...(actor==='owner'?{activity:state.activity||[]}:{}),
-      employees:Object.values(state.employees||{}).map(({id,firstName,lastName,username})=>({id,firstName,lastName,username}))}
+    ? {jobs,positions,shifts,occupied,...(isOwner(actor)?{activity:state.activity||[],owners:Object.values(state.profiles||{}).filter(profile=>isOwner(profile.id)).map(publicProfile)}:{}),
+      employees:Object.values(state.employees||{}).map(publicProfile)}
     : {jobs:jobs.filter(j=>j.driver===actor),positions:{[actor]:positions[actor]},occupied:{[actor]:Boolean(occupied[actor])},shifts:shifts.filter(s=>s.driver===actor)};
-  return {actor,revision,state:permitted,drivers:managesFleet(actor)?directory:directory.filter(d=>d.id===actor)};
+  const account=storedAccount(state,actor);
+  const profile=account?{...publicProfile(account),configured:true}:{id:actor,username:actor,firstName:'',lastName:'',configured:false};
+  return {actor,revision,profile,state:permitted,drivers:managesFleet(actor)?directory:directory.filter(d=>d.id===actor)};
 }
 const hex=bytes=>Array.from(new Uint8Array(bytes),b=>b.toString(16).padStart(2,'0')).join('');
 async function passwordHash(password,salt){
@@ -81,34 +109,43 @@ async function handleApi(request,env,path){
   if(request.method==='POST'&&origin&&origin!==new URL(request.url).origin) return json({error:'Přístup zamítnut.'},403);
   const users=accounts(env);
   const token=request.headers.get('Cookie')?.match(/(?:^|;\s*)taxi_session=([a-f0-9]{64})(?:;|$)/)?.[1];
-  const legacy=token?(await Promise.all(users.map(async ([id,key])=>[id,await session(key)]))).find(([,value])=>value===token)?.[0]:null;
   if(path==='login'&&request.method==='POST'){
     const {key,username,password}=await decode(request);
     const current=await read(env.DB);
-    const employee=typeof username==='string'&&Object.values(current.state.employees||{}).find(e=>e.username===username.trim().toLowerCase());
+    const login=normalizeUsername(username);
+    const account=login?registeredAccounts(current.state).find(entry=>entry.username===login):null;
     let actor;
-    if(typeof username==='string'&&username&&typeof password==='string'&&password.length<=128){
-      actor=users.find(([id,value])=>id===username.trim().toLowerCase()&&value===password)?.[0];
-      if(!actor){
-        const digest=await passwordHash(password,employee?.salt||'taxi-liberec-invalid-user');
-        if(employee&&digest===employee.digest) actor=employee.id;
+    if(login&&typeof password==='string'&&password.length<=128){
+      if(account){
+        if(await passwordHash(password,account.salt)===account.digest) actor=account.id;
+      }else{
+        actor=users.find(([id,value])=>id===login&&!storedAccount(current.state,id)&&value===password)?.[0];
+        if(!actor) await passwordHash(password,'taxi-liberec-invalid-user');
       }
     }
-    if(!username) actor=users.find(([,value])=>value===key)?.[0];
+    if(!login) actor=users.find(([id,value])=>!storedAccount(current.state,id)&&value===key)?.[0];
     if(!actor) return json({error:'Přihlašovací údaje nejsou platné.'},401);
     const secret=hex(crypto.getRandomValues(new Uint8Array(32)));
     const digest=await session(secret);
     const expires=Date.now()+43200000;
     const {state,revision}=await updateState(env.DB,s=>{
+      const latest=storedAccount(s,actor);
+      if(latest?.digest!==account?.digest||latest?.username!==account?.username) throw Error('Přihlašovací údaje se změnily. Přihlaste se znovu.');
       s.sessions=Object.fromEntries(Object.entries(s.sessions||{}).filter(([,entry])=>entry.expires>Date.now()));
       s.sessions[digest]={actor,expires};
     });
     return json(view(state,actor,revision),200,{'Set-Cookie':cookie(secret,43200)});
   }
   const current=token?await read(env.DB):null;
+  const legacy=token?(await Promise.all(users.filter(([id])=>!storedAccount(current.state,id)).map(async ([id,key])=>[id,await session(key)]))).find(([,value])=>value===token)?.[0]:null;
   const digest=token?await session(token):null;
   const active=current?.state.sessions?.[digest];
   const actor=legacy||((active?.expires>Date.now())?active.actor:null);
+  const checkSession=state=>{
+    const entry=state.sessions?.[digest];
+    if(legacy?!storedAccount(state,actor):entry?.actor===actor&&entry.expires>Date.now()) return;
+    throw Error('Přihlaste se znovu.');
+  };
   if(path==='logout'&&request.method==='POST'){
     if(active||legacy) await updateState(env.DB,state=>{
       if(active) delete state.sessions[digest];
@@ -119,26 +156,58 @@ async function handleApi(request,env,path){
   }
   if(!actor) return json({error:'Přihlaste se.'},401);
   if(path==='state'&&request.method==='GET') return json(view(current.state,actor,current.revision));
-  if(path==='drivers'&&request.method==='POST'&&managesFleet(actor)){
+  if(path==='profile'&&request.method==='POST'){
     const input=await decode(request);
-    const firstName=typeof input.firstName==='string'?input.firstName.trim():'';
-    const lastName=typeof input.lastName==='string'?input.lastName.trim():'';
-    const username=typeof input.username==='string'?input.username.trim().toLowerCase():'';
-    const password=input.password;
-    if(!firstName||!lastName||firstName.length>80||lastName.length>80||!/^[a-z0-9._-]{3,40}$/.test(username)||
-       typeof password!=='string'||password.length<12||password.length>128||['owner','dispatch'].includes(username)){
-      return json({error:'Zkontrolujte jméno, přihlašovací jméno a heslo (12 až 128 znaků).'},400);
+    const fields=profileInput(input);
+    const account=storedAccount(current.state,actor);
+    const password=input.newPassword;
+    const changePassword=Boolean(password)||!account;
+    if(changePassword||fields.username!==account.username){
+      const currentPassword=input.currentPassword;
+      const valid=typeof currentPassword==='string'&&(
+        account?currentPassword.length<=128&&await passwordHash(currentPassword,account.salt)===account.digest
+          :users.some(([id,key])=>id===actor&&currentPassword===key)
+      );
+      if(!valid) return json({error:'Stávající heslo nebo přístupový klíč není správný.'},400);
     }
-    const salt=hex(crypto.getRandomValues(new Uint8Array(16)));
-    const digest=await passwordHash(password,salt);
+    const credentials=changePassword?await newPassword(password):{salt:account.salt,digest:account.digest};
+    const secret=legacy?hex(crypto.getRandomValues(new Uint8Array(32))):null;
+    const retainedSession=secret?await session(secret):digest;
     const {state,revision}=await updateState(env.DB,s=>{
-      const employees=s.employees??={};
-      if(Object.values(employees).some(e=>e.username===username)) throw Error('Přihlašovací jméno už existuje.');
-      let number=s.driverSeq??6;
-      const id=String(++number).padStart(2,'0');
-      s.driverSeq=number;
-      employees[id]={id,firstName,lastName,username,salt,digest};
-      record(s,actor,'driver',id);
+      checkSession(s);
+      const latest=storedAccount(s,actor);
+      if(latest?.digest!==account?.digest||latest?.username!==account?.username) throw Error('Profil se mezitím změnil. Zkuste to znovu.');
+      checkUsername(s,users,fields.username,actor);
+      const entry={id:actor,...fields,...credentials};
+      if(s.employees?.[actor]) s.employees[actor]=entry;
+      else (s.profiles??={})[actor]=entry;
+      if(secret){
+        (s.sessions??={})[retainedSession]={actor,expires:Date.now()+43200000};
+        if(s.positions[actor]?.sessionId==='legacy') s.positions[actor].sessionId=retainedSession;
+      }
+      if(changePassword||fields.username!==account.username){
+        for(const [id,session] of Object.entries(s.sessions||{})){
+          if(session.actor===actor&&id!==retainedSession) delete s.sessions[id];
+        }
+      }
+    });
+    return json(view(state,actor,revision),200,secret?{'Set-Cookie':cookie(secret,43200)}:{});
+  }
+  if((path==='drivers'||path==='owners')&&request.method==='POST'){
+    const creatingOwner=path==='owners';
+    if(creatingOwner?!isOwner(actor):!managesFleet(actor)) return json({error:'Přístup zamítnut.'},403);
+    const input=await decode(request);
+    const fields=profileInput(input);
+    if(fields.username.length<3) throw Error('Přihlašovací jméno musí mít alespoň 3 znaky.');
+    const credentials=await newPassword(input.password);
+    const ownerId=creatingOwner?'owner-'+crypto.randomUUID():null;
+    const {state,revision}=await updateState(env.DB,s=>{
+      checkSession(s);
+      checkUsername(s,users,fields.username);
+      const id=ownerId??String(s.driverSeq=(s.driverSeq??6)+1).padStart(2,'0');
+      const directory=creatingOwner?(s.profiles??={}):(s.employees??={});
+      directory[id]={id,...fields,...credentials};
+      record(s,actor,creatingOwner?'ownerCreated':'driver',creatingOwner?fields.username:id);
     });
     return json(view(state,actor,revision),201);
   }
@@ -146,23 +215,45 @@ async function handleApi(request,env,path){
     const {address}=await decode(request);
     if(typeof address!=='string'||address.trim().length<3||address.length>200) return json({suggestions:[]});
     const endpoint=new URL('https://photon.komoot.io/api/');
-    endpoint.search=new URLSearchParams({q:address,lat:'50.7695',lon:'15.0514',limit:'8',layer:'house'});
-    const r=await fetch(endpoint,{signal:AbortSignal.timeout(2500)});
-    if(!r.ok) return json({suggestions:[]});
-    const result=await r.json();
-    const suggestions=(result.features??[]).flatMap(({properties:p,geometry})=>{
-      const [lng,lat]=geometry?.coordinates??[];
-      if(!Number.isFinite(lat)||!Number.isFinite(lng)||!p?.housenumber||p.countrycode?.toUpperCase()!=='CZ') return [];
-      const street=[p.street||p.name,p.housenumber].filter(Boolean).join(' ');
-      return [{address:[street,p.city||p.town||p.village||p.county].filter(Boolean).join(', '),point:{lat,lng}}];
+    endpoint.search=new URLSearchParams({
+      q:address.trim(), lat:'50.7695', lon:'15.0514', lang:'cs', countrycode:'CZ', limit:'12'
     });
-    return json({suggestions});
+    endpoint.searchParams.append('layer','house');
+    endpoint.searchParams.append('layer','street');
+    try{
+      const response=await fetch(endpoint,{signal:AbortSignal.timeout(6000)});
+      if(!response.ok) throw Error('Photon lookup failed');
+      const result=await response.json();
+      const houses=new Map(), streets=new Map();
+      for(const {properties:p,geometry} of result.features){
+        if(p?.countrycode?.toUpperCase()!=='CZ') continue;
+        const city=p.city||p.town||p.village||p.municipality||p.county;
+        if(!city) continue;
+        if(!p.housenumber){
+          if(p.type==='street'&&p.name){
+            const address=[p.name,city].join(', ');
+            if(address.length<=200) streets.set(address,{address});
+          }
+          continue;
+        }
+        if(geometry?.type!=='Point') continue;
+        const [lng,lat]=geometry.coordinates??[];
+        if(!Number.isFinite(lat)||Math.abs(lat)>90||!Number.isFinite(lng)||Math.abs(lng)>180) continue;
+        const street=p.street||(p.name!==p.housenumber?p.name:'');
+        const location=[p.postcode,city].filter(Boolean).join(' ');
+        const address=[street?[street,p.housenumber].join(' '):p.housenumber,location].join(', ');
+        if(address.length<=200&&!houses.has(address)) houses.set(address,{address,point:{lat,lng}});
+      }
+      return json({suggestions:[...houses.values(),...streets.values()].slice(0,8)});
+    }catch{
+      return json({error:'Vyhledávání adres je dočasně nedostupné.'},503);
+    }
   }
   if(path==='action'&&request.method==='POST'){
     const action=await decode(request);
     const {state,revision}=await updateState(env.DB,s=>{
       const sessionId=legacy?'legacy':digest;
-      if(!legacy&&!(s.sessions?.[digest]?.expires>Date.now())) throw Error('Přihlaste se.');
+      checkSession(s);
       if(action.type==='gpsStop'){
         if(s.positions[actor]?.sessionId!==sessionId) return false;
         delete s.positions[actor];
