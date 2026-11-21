@@ -330,35 +330,27 @@ async function handleApi(request,env,path){
     if(typeof address!=='string'||address.trim().length<3||address.length>200) return json({suggestions:[]});
     const endpoint=new URL('https://photon.komoot.io/api/');
     endpoint.search=new URLSearchParams({
-      q:address.trim(), lat:'50.7695', lon:'15.0514', countrycode:'CZ', limit:'12'
+      q:address.trim(), lat:'50.7695', lon:'15.0514', countrycode:'CZ', limit:'15'
     });
     endpoint.searchParams.append('layer','house');
-    endpoint.searchParams.append('layer','street');
     try{
       const response=await fetch(endpoint,{signal:AbortSignal.timeout(6000)});
       if(!response.ok) throw Error('Photon lookup failed');
       const result=await response.json();
-      const houses=new Map(), streets=new Map();
+      const houses=new Map();
       for(const {properties:p,geometry} of result.features){
         if(p?.countrycode?.toUpperCase()!=='CZ') continue;
         const city=p.city||p.town||p.village||p.municipality||p.county;
         if(!city) continue;
-        if(!p.housenumber){
-          if(p.type==='street'&&p.name){
-            const address=[p.name,city].join(', ');
-            if(address.length<=200) streets.set(address,{address});
-          }
-          continue;
-        }
-        if(geometry?.type!=='Point') continue;
-        const [lng,lat]=geometry.coordinates??[];
+        if(!p.housenumber||geometry?.type!=='Point'||!Array.isArray(geometry.coordinates)) continue;
+        const [lng,lat]=geometry.coordinates;
         if(!Number.isFinite(lat)||Math.abs(lat)>90||!Number.isFinite(lng)||Math.abs(lng)>180) continue;
         const street=p.street||(p.name!==p.housenumber?p.name:'');
         const location=[p.postcode,city].filter(Boolean).join(' ');
         const address=[street?[street,p.housenumber].join(' '):p.housenumber,location].join(', ');
         if(address.length<=200&&!houses.has(address)) houses.set(address,{address,point:{lat,lng}});
       }
-      return json({suggestions:[...houses.values(),...streets.values()].slice(0,8)});
+      return json({suggestions:[...houses.values()].slice(0,8)});
     }catch{
       return json({error:'Vyhledávání adres je dočasně nedostupné.'},503);
     }
