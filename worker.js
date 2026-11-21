@@ -1,4 +1,4 @@
-import {change,drivers,fleet,isOwner,managesFleet} from './public/model.js';
+import {change,busy,drivers,fleet,isOwner,employeeRole,permissionsFor,availablePermissions,allows,actionPermissions} from './public/model.js';
 import assets from './assets.generated.js';
 
 const json=(payload,status=200,headers={})=>Response.json(payload,{status,headers:{'Cache-Control':'no-store',...headers}});
@@ -66,23 +66,56 @@ async function newPassword(password){
   const salt=hex(crypto.getRandomValues(new Uint8Array(16)));
   return {salt,digest:await passwordHash(password,salt)};
 }
-function view(state,actor,revision){
-  const directory=fleet(state);
-  const {jobs,shifts,occupied={}}=state;
+function employeeDirectory(state,users){
+  const ids=new Set([
+    ...Object.keys(state.employees||{}),...Object.keys(state.profiles||{}),
+    ...users.map(([id])=>id)
+  ]);
+  return [...ids].filter(id=>!isOwner(id)).map(id=>{
+    const account=storedAccount(state,id);
+    const fallback=drivers.find(driver=>driver.id===id)?.name;
+    const [firstName='',lastName='']=(fallback||'').split(' ');
+    return {...publicProfile(account??{id,firstName,lastName,username:id}),
+      role:employeeRole(state,id),permissions:permissionsFor(state,id)};
+  }).sort((a,b)=>a.lastName.localeCompare(b.lastName,'cs')||a.firstName.localeCompare(b.firstName,'cs')||a.username.localeCompare(b.username));
+}
+function view(state,actor,revision,users){
+  const permissions=permissionsFor(state,actor);
+  const role=isOwner(actor)?'owner':employeeRole(state,actor);
+  const can=key=>allows(permissions,key);
+  const allHistory=role!=='driver';
   const now=Date.now();
   const positions=Object.fromEntries(Object.keys(state.positions).flatMap(id=>{
+    if(!can('fleetMap')&&(id!==actor||!can('gps'))) return [];
     const active=activePosition(state,id,now);
     if(!active) return [];
     const {sessionId,...position}=active;
     return [[id,position]];
   }));
-  const permitted=managesFleet(actor)
-    ? {jobs,positions,shifts,occupied,...(isOwner(actor)?{activity:state.activity||[],owners:Object.values(state.profiles||{}).filter(profile=>isOwner(profile.id)).map(publicProfile)}:{}),
-      employees:Object.values(state.employees||{}).map(publicProfile)}
-    : {jobs:jobs.filter(j=>j.driver===actor),positions:{[actor]:positions[actor]},occupied:{[actor]:Boolean(occupied[actor])},shifts:shifts.filter(s=>s.driver===actor)};
+  const permitted={
+    jobs:state.jobs.filter(job=>job.status==='done'
+      ? can('history')&&(allHistory||job.driver===actor)
+      : ['waiting','assigned','accepted','onboard'].includes(job.status)&&can('dispatchJobs')
+        || job.status!=='cancelled'&&can('driverRide')&&job.driver===actor),
+    positions,
+    shifts:can('history')?state.shifts.filter(shift=>allHistory||shift.driver===actor):[],
+    occupied:Object.fromEntries(Object.entries(state.occupied||{}).filter(([id])=>can('fleetMap')||
+      (id===actor&&(can('availability')||can('gps')))))
+  };
+  if(can('fleetMap')){
+    for(const driver of fleet(state)){
+      if(busy(state,driver.id)||!allows(permissionsFor(state,driver.id),'driverRide')) permitted.occupied[driver.id]=true;
+    }
+  }
+  if(isOwner(actor)){
+    permitted.activity=state.activity||[];
+    permitted.owners=Object.values(state.profiles||{}).filter(profile=>isOwner(profile.id)).map(publicProfile);
+    permitted.employees=employeeDirectory(state,users);
+  }
   const account=storedAccount(state,actor);
   const profile=account?{...publicProfile(account),configured:true}:{id:actor,username:actor,firstName:'',lastName:'',configured:false};
-  return {actor,revision,profile,state:permitted,drivers:managesFleet(actor)?directory:directory.filter(d=>d.id===actor)};
+  const showFleet=can('fleetMap')||can('dispatchJobs')||(can('history')&&allHistory);
+  return {actor,revision,profile,role,permissions,state:permitted,drivers:fleet(state).filter(d=>showFleet||d.id===actor)};
 }
 const hex=bytes=>Array.from(new Uint8Array(bytes),b=>b.toString(16).padStart(2,'0')).join('');
 async function passwordHash(password,salt){
@@ -101,6 +134,12 @@ async function updateState(db,apply){
   }
   throw Error('Probíhá více změn najednou. Zkuste akci znovu.');
 }
+function validatePermissions(permissions,role){
+  const keys=availablePermissions(role);
+  if(!Array.isArray(permissions)||permissions.some(key=>!keys.includes(key))) throw Error('Neplatná oprávnění.');
+  return keys.filter(key=>permissions.includes(key));
+}
+class AccessDenied extends Error {}
 function record(state,actor,type,detail){
   (state.activity??=[]).unshift({actor,type,detail,time:Date.now()});
 }
@@ -134,7 +173,7 @@ async function handleApi(request,env,path){
       s.sessions=Object.fromEntries(Object.entries(s.sessions||{}).filter(([,entry])=>entry.expires>Date.now()));
       s.sessions[digest]={actor,expires};
     });
-    return json(view(state,actor,revision),200,{'Set-Cookie':cookie(secret,43200)});
+    return json(view(state,actor,revision,users),200,{'Set-Cookie':cookie(secret,43200)});
   }
   const current=token?await read(env.DB):null;
   const legacy=token?(await Promise.all(users.filter(([id])=>!storedAccount(current.state,id)).map(async ([id,key])=>[id,await session(key)]))).find(([,value])=>value===token)?.[0]:null;
@@ -155,7 +194,7 @@ async function handleApi(request,env,path){
     return json({ok:true},200,{'Set-Cookie':cookie('',0)});
   }
   if(!actor) return json({error:'Přihlaste se.'},401);
-  if(path==='state'&&request.method==='GET') return json(view(current.state,actor,current.revision));
+  if(path==='state'&&request.method==='GET') return json(view(current.state,actor,current.revision,users));
   if(path==='profile'&&request.method==='POST'){
     const input=await decode(request);
     const fields=profileInput(input);
@@ -178,7 +217,7 @@ async function handleApi(request,env,path){
       const latest=storedAccount(s,actor);
       if(latest?.digest!==account?.digest||latest?.username!==account?.username) throw Error('Profil se mezitím změnil. Zkuste to znovu.');
       checkUsername(s,users,fields.username,actor);
-      const entry={id:actor,...fields,...credentials};
+      const entry={...latest,id:actor,...fields,...credentials};
       if(s.employees?.[actor]) s.employees[actor]=entry;
       else (s.profiles??={})[actor]=entry;
       if(secret){
@@ -191,32 +230,50 @@ async function handleApi(request,env,path){
         }
       }
     });
-    return json(view(state,actor,revision),200,secret?{'Set-Cookie':cookie(secret,43200)}:{});
+    return json(view(state,actor,revision,users),200,secret?{'Set-Cookie':cookie(secret,43200)}:{});
   }
-  if((path==='drivers'||path==='owners')&&request.method==='POST'){
-    const creatingOwner=path==='owners';
-    if(creatingOwner?!isOwner(actor):!managesFleet(actor)) return json({error:'Přístup zamítnut.'},403);
+  if(['drivers','employees','owners','employee-permissions'].includes(path)&&request.method==='POST'){
+    if(!isOwner(actor)) return json({error:'Přístup zamítnut.'},403);
     const input=await decode(request);
+    if(path==='employee-permissions'){
+      const {id,permissions}=input;
+      const {state,revision}=await updateState(env.DB,s=>{
+        checkSession(s);
+        const employee=employeeDirectory(s,users).find(entry=>entry.id===id);
+        if(!employee) throw Error('Účet zaměstnance nebyl nalezen.');
+        (s.employeePermissions??={})[id]=validatePermissions(permissions,employee.role);
+        if(!permissions.includes('gps')) delete s.positions[id];
+        record(s,actor,'employeePermissions',employee.username);
+      });
+      return json(view(state,actor,revision,users));
+    }
+    const creatingOwner=path==='owners';
+    const role=path==='drivers'?'driver':input.role;
+    if(!creatingOwner&&!['driver','dispatcher'].includes(role)) throw Error('Vyberte pracovní pozici.');
     const fields=profileInput(input);
     if(fields.username.length<3) throw Error('Přihlašovací jméno musí mít alespoň 3 znaky.');
+    const permissions=!creatingOwner&&input.permissions!==undefined?validatePermissions(input.permissions,role):null;
     const credentials=await newPassword(input.password);
-    const ownerId=creatingOwner?'owner-'+crypto.randomUUID():null;
+    const accountId=creatingOwner?'owner-'+crypto.randomUUID():role==='dispatcher'?'dispatcher-'+crypto.randomUUID():null;
     const {state,revision}=await updateState(env.DB,s=>{
       checkSession(s);
       checkUsername(s,users,fields.username);
-      const id=ownerId??String(s.driverSeq=(s.driverSeq??6)+1).padStart(2,'0');
+      const id=accountId??String(s.driverSeq=(s.driverSeq??6)+1).padStart(2,'0');
       const directory=creatingOwner?(s.profiles??={}):(s.employees??={});
-      directory[id]={id,...fields,...credentials};
-      record(s,actor,creatingOwner?'ownerCreated':'driver',creatingOwner?fields.username:id);
+      directory[id]={id,...fields,...credentials,...(creatingOwner?{}:{role})};
+      if(permissions) (s.employeePermissions??={})[id]=permissions;
+      record(s,actor,creatingOwner?'ownerCreated':'employeeCreated',fields.username);
     });
-    return json(view(state,actor,revision),201);
+    return json(view(state,actor,revision,users),201);
   }
   if(path==='geocode'&&request.method==='POST'){
+    const permissions=permissionsFor(current.state,actor);
+    if(!['create','edit','ownRide'].some(key=>allows(permissions,key))) return json({error:'Přístup zamítnut.'},403);
     const {address}=await decode(request);
     if(typeof address!=='string'||address.trim().length<3||address.length>200) return json({suggestions:[]});
     const endpoint=new URL('https://photon.komoot.io/api/');
     endpoint.search=new URLSearchParams({
-      q:address.trim(), lat:'50.7695', lon:'15.0514', lang:'cs', countrycode:'CZ', limit:'12'
+      q:address.trim(), lat:'50.7695', lon:'15.0514', countrycode:'CZ', limit:'12'
     });
     endpoint.searchParams.append('layer','house');
     endpoint.searchParams.append('layer','street');
@@ -259,6 +316,7 @@ async function handleApi(request,env,path){
         delete s.positions[actor];
         return;
       }
+      if(Object.hasOwn(actionPermissions,action.type)&&!allows(permissionsFor(s,actor),actionPermissions[action.type])) throw new AccessDenied('Přístup zamítnut.');
       if(action.type==='assign'&&!activePosition(s,action.driver,Date.now())) throw Error('Řidič nesdílí aktuální polohu.');
       const previous=s.positions[actor];
       change(s,actor,action);
@@ -270,7 +328,7 @@ async function handleApi(request,env,path){
       if(action.type==='availability') return;
       record(s,actor,action.type,['create','createOwn'].includes(action.type)?s.seq:action.id??action.date);
     });
-    return json(view(state,actor,revision));
+    return json(view(state,actor,revision,users));
   }
   return json({error:'Stránka neexistuje.'},404);
 }
@@ -279,7 +337,7 @@ export default {
     const path=new URL(request.url).pathname;
     if(path.startsWith('/api/')){
       try{return await handleApi(request,env,path.slice(5));}
-      catch(error){return json({error:error instanceof SyntaxError?'Neplatný požadavek.':error.message},400);}
+      catch(error){return json({error:error instanceof SyntaxError?'Neplatný požadavek.':error.message},error instanceof AccessDenied?403:400);}
     }
     const asset=assets[path==='/'?'/index.html':path];
     if(!Array.isArray(asset)) return new Response('Nenalezeno',{status:404});
