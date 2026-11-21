@@ -6,8 +6,15 @@ export const drivers = [
   {id:'05',name:'Lukáš Veselý',lat:50.7647,lng:15.0271},
   {id:'06',name:'Ondřej Svoboda',lat:50.7789,lng:15.0249}
 ];
-export const managesFleet = actor => actor === 'dispatch' || actor === 'owner';
-export const fleet = state => [...drivers, ...Object.values(state.employees||{}).map(({id,firstName,lastName})=>({id,name:firstName+' '+lastName}))];
+export const isOwner = actor => actor === 'owner' || /^owner-[0-9a-f-]{36}$/.test(actor);
+export const managesFleet = actor => actor === 'dispatch' || isOwner(actor);
+export const fleet = state => [
+  ...drivers.map(driver=>{
+    const profile=state.profiles?.[driver.id];
+    return profile?{...driver,name:profile.firstName+' '+profile.lastName}:driver;
+  }),
+  ...Object.values(state.employees||{}).map(({id,firstName,lastName})=>({id,name:firstName+' '+lastName}))
+];
 const dayFormat = new Intl.DateTimeFormat('sv-SE',{timeZone:'Europe/Prague'});
 export const day = (t=Date.now()) => dayFormat.format(t);
 export const initial = () => ({jobs:[],positions:{},shifts:[],seq:1000});

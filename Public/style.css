@@ -27,7 +27,8 @@
 
 #own-ride fieldset { display:grid; gap:11px; padding:0; margin:0; border:0; min-width:0; }
 #own-ride { padding-inline:0; }
-.address-suggestions { display:grid; gap:4px; }
+.address-suggestions { display:grid; gap:4px; max-height:220px; overflow:auto; }
+.address-status { font-size:12px; }
 .address-suggestions[hidden] { display:none; }
 .address-suggestions button { text-align:left; min-height:42px; }
 .stop-marker { width:27px; height:27px; border-radius:50%; pointer-events:auto; z-index:1; }
