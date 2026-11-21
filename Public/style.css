@@ -103,3 +103,8 @@
 .location-pin { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -87.5%); color: #b91c1c; filter: drop-shadow(0 1px 2px white); pointer-events: none; }
 .location-pin svg { display: block; width: 36px; height: 36px; fill: none; stroke: currentColor; stroke-width: 2; }
 .location-actions { flex-wrap: wrap; }
+
+.job-times { display: grid; gap: 4px; text-align: left; }
+.job-timestamp { white-space: nowrap; }
+.scheduled-job { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; vertical-align: middle; }
+.scheduled-job svg { width: 15px; height: 15px; flex: none; color: #b91c1c; stroke: currentColor; stroke-width: 2; fill: none; }

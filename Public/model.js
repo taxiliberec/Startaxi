@@ -48,11 +48,11 @@ export const actionPermissions = Object.freeze({
   gps:'gps',availability:'availability',close:'closeShift'
 });
 export const fleet = state => [
-  ...drivers.map(driver=>{
-    const profile=state.profiles?.[driver.id];
+  ...drivers.filter(driver=>!state.removedUsers?.[driver.id]).map(driver=>{
+    const profile=state.profiles?.[driver.id]??state.userNames?.[driver.id];
     return profile?{...driver,name:profile.firstName+' '+profile.lastName,lastName:profile.lastName}:{...driver,lastName:driver.name.split(' ').at(-1)};
   }),
-  ...Object.values(state.employees||{}).filter(employee=>employeeRole(state,employee.id)==='driver').map(({id,firstName,lastName})=>({id,name:firstName+' '+lastName,lastName}))
+  ...Object.values(state.employees||{}).filter(employee=>!state.removedUsers?.[employee.id]&&employeeRole(state,employee.id)==='driver').map(({id,firstName,lastName})=>({id,name:firstName+' '+lastName,lastName}))
 ];
 const dayFormat = new Intl.DateTimeFormat('sv-SE',{timeZone:'Europe/Prague'});
 export const day = (t=Date.now()) => dayFormat.format(t);

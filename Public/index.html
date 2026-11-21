@@ -99,6 +99,15 @@
     <div class="actions"><button type="button" data-close>Zavřít</button><button type="submit" class="primary">Uložit přiřazení</button></div>
   </form>
 </dialog>
+<dialog id="user-name-editor" aria-labelledby="user-name-title">
+  <form id="user-name-form">
+    <h2 id="user-name-title">Upravit jméno uživatele</h2>
+    <p id="user-name-account"></p>
+    <label>Jméno<input name="firstName" maxlength="80" required></label>
+    <label>Příjmení<input name="lastName" maxlength="80" required></label>
+    <div class="actions"><button type="button" data-close>Zpět</button><button type="submit" class="primary">Uložit jméno</button></div>
+  </form>
+</dialog>
 <dialog id="permission-editor">
   <form id="permissions-form">
     <h2>Oprávnění zaměstnance</h2>
