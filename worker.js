@@ -1,4 +1,4 @@
-import {change,busy,drivers,fleet,isOwner,employeeRole,permissionsFor,availablePermissions,allows,actionPermissions} from './public/model.js';
+import {change,busy,drivers,fleet,isOwner,employeeRole,permissionsFor,availablePermissions,allows,actionPermissions,validPoint,meters} from './public/model.js';
 import assets from './assets.generated.js';
 
 const json=(payload,status=200,headers={})=>Response.json(payload,{status,headers:{'Cache-Control':'no-store',...headers}});
@@ -161,6 +161,20 @@ class AccessDenied extends Error {}
 function record(state,actor,type,detail){
   (state.activity??=[]).unshift({actor,type,detail,time:Date.now()});
 }
+function houseAddress({properties:p,geometry}){
+  if(p?.countrycode?.toUpperCase()!=='CZ'||!p.housenumber||
+     geometry?.type!=='Point'||!Array.isArray(geometry.coordinates)) return null;
+  const city=p.city||p.town||p.village||p.municipality||p.county;
+  if(!city) return null;
+  const [lng,lat]=geometry.coordinates;
+  const point={lat,lng};
+  if(!validPoint(point)) return null;
+  const street=p.street||(p.name!==p.housenumber?p.name:'');
+  const location=[p.postcode,city].filter(Boolean).join(' ');
+  const address=[street?[street,p.housenumber].join(' '):p.housenumber,location].join(', ');
+  return address.length<=200?{address,point}:null;
+}
+
 async function handleApi(request,env,path){
   const origin=request.headers.get('Origin');
   if(request.method==='POST'&&origin&&origin!==new URL(request.url).origin) return json({error:'Přístup zamítnut.'},403);
@@ -323,10 +337,36 @@ async function handleApi(request,env,path){
     });
     return json(view(state,actor,revision,users),201);
   }
-  if(path==='geocode'&&request.method==='POST'){
+  if(['geocode','reverse-geocode'].includes(path)&&request.method==='POST'){
     const permissions=permissionsFor(current.state,actor);
     if(!['create','edit','ownRide'].some(key=>allows(permissions,key))) return json({error:'Přístup zamítnut.'},403);
-    const {address}=await decode(request);
+    const body=await decode(request);
+    if(path==='reverse-geocode'){
+      const {point}=body;
+      if(!validPoint(point)) return json({error:'Neplatné souřadnice adresy.'},400);
+      const endpoint=new URL('https://photon.komoot.io/reverse');
+      endpoint.search=new URLSearchParams({
+        lat:String(point.lat), lon:String(point.lng), radius:'0.1', layer:'house', limit:'10'
+      });
+      try{
+        const response=await fetch(endpoint,{signal:AbortSignal.timeout(6000)});
+        if(!response.ok) throw Error('Photon lookup failed');
+        const {features}=await response.json();
+        let closest=null, distance=100;
+        for(const feature of features){
+          const match=houseAddress(feature);
+          if(!match) continue;
+          const gap=meters(point,match.point);
+          if(gap>distance) continue;
+          closest=match;
+          distance=gap;
+        }
+        return json({address:closest?.address??null});
+      }catch{
+        return json({error:'Vyhledávání adres je dočasně nedostupné.'},503);
+      }
+    }
+    const {address}=body;
     if(typeof address!=='string'||address.trim().length<3||address.length>200) return json({suggestions:[]});
     const endpoint=new URL('https://photon.komoot.io/api/');
     endpoint.search=new URLSearchParams({
@@ -338,17 +378,9 @@ async function handleApi(request,env,path){
       if(!response.ok) throw Error('Photon lookup failed');
       const result=await response.json();
       const houses=new Map();
-      for(const {properties:p,geometry} of result.features){
-        if(p?.countrycode?.toUpperCase()!=='CZ') continue;
-        const city=p.city||p.town||p.village||p.municipality||p.county;
-        if(!city) continue;
-        if(!p.housenumber||geometry?.type!=='Point'||!Array.isArray(geometry.coordinates)) continue;
-        const [lng,lat]=geometry.coordinates;
-        if(!Number.isFinite(lat)||Math.abs(lat)>90||!Number.isFinite(lng)||Math.abs(lng)>180) continue;
-        const street=p.street||(p.name!==p.housenumber?p.name:'');
-        const location=[p.postcode,city].filter(Boolean).join(' ');
-        const address=[street?[street,p.housenumber].join(' '):p.housenumber,location].join(', ');
-        if(address.length<=200&&!houses.has(address)) houses.set(address,{address,point:{lat,lng}});
+      for(const feature of result.features){
+        const match=houseAddress(feature);
+        if(match&&!houses.has(match.address)) houses.set(match.address,match);
       }
       return json({suggestions:[...houses.values()].slice(0,8)});
     }catch{
