@@ -1,4 +1,4 @@
-import {drivers as demoDrivers,managesFleet,day,busy,demoState,change,meters} from './model.js';
+import {managesFleet,day,busy,meters} from './model.js';
 const $=sel=>document.querySelector(sel);
 const icons={
  taxi:'<path d="M5 17v2m14-2v2M3 12l2-2 2-5h10l2 5 2 2v5H3zm2-2h14M7 14h1m8 0h1M10 5V3h4v2"/>',
@@ -15,11 +15,10 @@ const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&
 const cash=c=>new Intl.NumberFormat('cs-CZ',{style:'currency',currency:'CZK',maximumFractionDigits:c%100?2:0}).format(c/100);
 const fmtDate=d=>new Intl.DateTimeFormat('cs-CZ',{dateStyle:'long',timeZone:'Europe/Prague'}).format(new Date(d+'T12:00:00Z'));
 const time=t=>new Intl.DateTimeFormat('cs-CZ',{timeStyle:'short',timeZone:'Europe/Prague'}).format(t);
-let drivers=demoDrivers, revision=-1, sessionGeneration=0;
+let drivers=[], revision=-1, sessionGeneration=0;
 const driverName=id=>drivers.find(d=>d.id===id)?.name??'';
 const statusText={waiting:'Čeká',assigned:'Čeká na přijetí',accepted:'K vyzvednutí',onboard:'Se zákazníkem',done:'Dokončeno'};
-const storage='taxi-liberec-demo-v1';
-let state=JSON.parse(localStorage.getItem(storage)||'null')||demoState(), actor='dispatch', live=false, page='dispatch', queue='waiting', selected='', filter='', reportDate=day(), gps=null, gpsHeartbeat=null, gpsText='', lastGps=0, pending=false, incoming=null, noticeCount=0;
+let state=null, actor='dispatch', live=false, page='dispatch', queue='waiting', selected='', filter='', reportDate=day(), gps=null, gpsHeartbeat=null, gpsText='', lastGps=0, pending=false, incoming=null, noticeCount=0;
 function notify(msg){
  const t=$('#toast'); t.textContent=msg; t.className='visible';
  clearTimeout(notify.timer); notify.timer=setTimeout(()=>t.className='',4200);
@@ -27,7 +26,7 @@ function notify(msg){
 async function api(path,body){
  const r=await fetch('/api/'+path,{method:body?'POST':'GET',headers:body?{'Content-Type':'application/json'}:{},body:body&&JSON.stringify(body),cache:'no-store'});
  const data=await r.json();
- if(!r.ok) throw Error(data.error||'Chyba spojení.');
+ if(!r.ok) throw Object.assign(Error(data.error||'Chyba spojení.'),{status:r.status});
  return data;
 }
 function receive(data){
@@ -46,23 +45,25 @@ function receive(data){
  if(jobsChanged||otherChanged||previous!==actor) render();
  else if(page==='dispatch'){stats();renderMap();}
 }
+function lockApp(){
+ sessionGeneration++; revision=-1; drivers=[]; state=null; live=false; stopGps();
+ if($('#shiftbox').open) $('#shiftbox').close();
+ render();
+}
 async function perform(action,quiet=false){
- if(pending&&!quiet) return false;
+ if(!live||(pending&&!quiet)) return false;
  if(!quiet) pending=true;
+ const generation=sessionGeneration;
  try{
-   if(live){
-     const generation=sessionGeneration;
-     const result=await api('action',action);
-     if(generation===sessionGeneration&&live) receive(result);
-   }
-   else {
-     const before=JSON.parse(localStorage.getItem(storage)||'null')||state;
-     state=change(before,actor,action);
-     localStorage.setItem(storage,JSON.stringify(state)); render();
-   }
+   const result=await api('action',action);
+   if(generation!==sessionGeneration||!live) return false;
+   receive(result);
    return true;
- }catch(e){if(!quiet) notify(e.message);return false;}
- finally{if(!quiet) pending=false;}
+ }catch(e){
+   if(generation===sessionGeneration&&e.status===401) lockApp();
+   if(!quiet) notify(e.message);
+   return false;
+ }finally{if(!quiet) pending=false;}
 }
 function stats(){
  const isDispatch=managesFleet(actor);
@@ -81,6 +82,10 @@ function stats(){
  $('#stats').innerHTML=values.map(([i,c,label,v])=>'<div class="stat"><span class="sticon '+c+'">'+icon(i)+'</span><div><p>'+label+'</p><strong>'+v+'</strong></div></div>').join('');
 }
 function render(){
+ $('#loginbox').hidden=live;
+ $('.top').hidden=!live;
+ $('#app').hidden=!live;
+ if(!live) return;
  $('#dispatch').hidden=page!=='dispatch';
  $('#history').hidden=page!=='history';
  $('#driver').hidden=page!=='driver';
@@ -90,8 +95,6 @@ function render(){
    b.hidden=(b.dataset.page==='employees'&&(!live||!managesFleet(actor)))||(b.dataset.page==='activity'&&actor!=='owner')||(b.dataset.page==='dispatch'&&!managesFleet(actor))||(b.dataset.page==='driver'&&managesFleet(actor));
    b.classList.toggle('active',page===b.dataset.page);
  });
- $('#role').hidden=live;
- $('#role').textContent=managesFleet(actor)?'Pohled řidiče':'Pohled dispečera';
  $('#login').textContent=!live?'Přihlásit se':actor==='owner'?'M':managesFleet(actor)?'D':driverName(actor).slice(0,1);
  $('#login').setAttribute('aria-label',live?'Odhlásit se':'Přihlásit se');
  $('#connection').textContent=live?(actor==='owner'?'Majitel firmy':managesFleet(actor)?'Dispečer':'Řidič'):'Ukázková data';
@@ -189,7 +192,7 @@ function project(p){
 }
 function renderMap(){
  const map=$('#map'), w=map.clientWidth,h=map.clientHeight;
- if(!w||!h) return;
+ if(!live||!w||!h) return;
  const c=project(center), x=c.x-w/2-offset.x,y=c.y-h/2-offset.y;
  const key=[zoom,w,h,offset.x,offset.y].join();
  if(key!==tileKey){
@@ -287,7 +290,7 @@ function toggleGps(){
 }
 document.addEventListener('click',async e=>{
  const b=e.target.closest('button');
- if(!b) return;
+ if(!b||!live) return;
  const d=b.dataset;
  if(d.page){page=d.page==='dispatch'&&!managesFleet(actor)?'driver':d.page;render();return;}
  if(d.close!==undefined){b.closest('dialog').close();return;}
@@ -321,13 +324,8 @@ document.addEventListener('click',async e=>{
    $('#shiftform').elements.total.value=(sum/100).toFixed(2);
    $('#shiftbox').showModal();return;
  }
- if(b.id==='role'){
-   stopGps();actor=managesFleet(actor)?(selected||state.jobs.find(j=>j.status==='assigned')?.driver||'01'):'dispatch';
-   page=managesFleet(actor)?'dispatch':'driver';selected='';render();return;
- }
  if(b.id==='login'){
-   if(!live){$('#loginbox').showModal();return;}
-   try {await api('logout',{});sessionGeneration++;revision=-1;drivers=demoDrivers;stopGps();live=false;actor='dispatch';page='dispatch';state=JSON.parse(localStorage.getItem(storage)||'null')||demoState();render();}
+   try {await api('logout',{});lockApp();}
    catch(e){notify(e.message);}
  }
 });
@@ -358,21 +356,16 @@ $('#shiftform').addEventListener('submit',async e=>{
 $('#loginform').addEventListener('submit',async e=>{
  e.preventDefault();
  const f=e.currentTarget;
+ const submit=f.querySelector('button');
+ submit.disabled=true;
  try{
    const {username,password}=Object.fromEntries(new FormData(f));
    const payload=username.trim()?{username,password}:{key:password};
    const data=await api('login',payload);
    sessionGeneration++;
-   receive(data);f.reset();$('#loginbox').close();}
+   receive(data);f.reset();}
  catch(e){notify(e.message);}
-});
-window.addEventListener('storage',e=>{
- if(live||e.key!==storage||!e.newValue) return;
- const old=state.jobs.filter(j=>j.status==='done').length;
- state=JSON.parse(e.newValue);
- if(managesFleet(actor)&&state.jobs.filter(j=>j.status==='done').length>old) notify('Zakázka dokončena. Řidič je volný.');
- if(busy(state,actor)?.status==='assigned') notify('Nová zakázka.');
- render();
+ finally{submit.disabled=false;}
 });
 $('#employee-form').addEventListener('submit',async e=>{
  e.preventDefault();
@@ -390,11 +383,11 @@ let polling=false;
 async function poll(){
  if(polling||pending||!live) return;
  polling=true;
+ const generation=sessionGeneration;
  try{
-   const generation=sessionGeneration;
    const data=await api('state');
    if(live&&generation===sessionGeneration&&data.revision>revision) receive(data);
- } catch {}
+ }catch(error){if(generation===sessionGeneration&&error.status===401) lockApp();}
  finally{polling=false;}
 }
 render();

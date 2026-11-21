@@ -19,3 +19,8 @@
 .revenue-value { display: block; white-space: nowrap; }
 .revenue progress { width: 100%; min-width: 5rem; height: .65rem; accent-color: #7751c8; }
 .revenue progress.previous { accent-color: #617184; }
+
+#loginbox{min-height:100vh;min-height:100dvh;display:grid;place-items:center;padding:24px;background:#101827}
+#loginbox form{width:min(100%,420px);background:white;border-radius:16px;padding:24px;color:#192438}
+#loginbox h1{text-align:center;font-size:1.4rem;margin:0 0 20px}
+#loginbox .actions button{width:100%}
