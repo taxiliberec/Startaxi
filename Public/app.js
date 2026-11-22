@@ -1,4 +1,4 @@
-import {isOwner,allows,availablePermissions,defaultPermissions,permissionLabels,day,busy,meters,validPoint} from './model.js';
+import {isOwner,allows,availablePermissions,defaultPermissions,permissionLabels,day,busy,meters,validPoint,assignmentTimeout} from './model.js';
 const $=sel=>document.querySelector(sel);
 const icons={
  person:'<circle cx="12" cy="5" r="2"/><path d="M5 10h14m-7 0v5m0 0-4 6m4-6 4 6"/>',
@@ -47,7 +47,30 @@ function notify(msg){
  const t=$('#toast'); t.textContent=msg; t.className='visible';
  clearTimeout(notify.timer); notify.timer=setTimeout(()=>t.className='',4200);
 }
+const nativeLocation=window.taximetrLocation;
+if(nativeLocation) window.taximetrLocationReady=true;
+let nativeTracking=false, nativeStarting=false, nativeGeneration=0;
+const gpsRunning=()=>gps!==null||nativeTracking;
 let rideAudio;
+let ridePushEnabled=false;
+async function enableRidePush(){
+ if(!('PushManager' in window)||!('Notification' in window)||!('serviceWorker' in navigator)){
+   notify('Na tomto zařízení otevřete nainstalovanou aplikaci taximetr a povolte oznámení.');
+   return;
+ }
+ try{
+   const permission=await Notification.requestPermission();
+   if(permission!=='granted'){notify('Povolte oznámení v nastavení telefonu.');return;}
+   const {publicKey}=await api('push');
+   const registration=await navigator.serviceWorker.ready;
+   const existing=await registration.pushManager.getSubscription();
+   const subscription=existing??await registration.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:publicKey});
+   await api('push',{endpoint:subscription.endpoint});
+   ridePushEnabled=true;
+   if(page==='driver') renderDriver();
+   notify('Oznámení zakázek jsou zapnutá.');
+ }catch(error){notify(error.message);}
+}
 async function enableRideAudio(){
  const AudioContext=window.AudioContext||window.webkitAudioContext;
  if(!AudioContext) return false;
@@ -65,17 +88,32 @@ function chimeRide(){
    note.type='sine';
    note.frequency.value=frequency;
    volume.gain.setValueAtTime(0,start);
-   volume.gain.linearRampToValueAtTime(.22,start+.02);
+   volume.gain.linearRampToValueAtTime(.38,start+.02);
    volume.gain.exponentialRampToValueAtTime(.001,start+.24);
    note.connect(volume).connect(rideAudio.destination);
    note.start(start);
    note.stop(start+.25);
  }
 }
+let lastSync=0, syncFailed=false;
+function showSync(){
+ const status=$('#sync-status');
+ const text=!navigator.onLine?'Bez internetu':syncFailed?'Spojení se serverem přerušeno':lastSync?'Připojeno':'Ověřuji spojení';
+ const label=lastSync?text+' · poslední synchronizace '+new Date(lastSync).toLocaleTimeString('cs-CZ',{hour:'2-digit',minute:'2-digit'}):text;
+ if(status.textContent!==label) status.textContent=label;
+}
 async function api(path,body){
  const headers=body?{'Content-Type':'application/json'}:{};
  if(path==='state'&&live) headers['If-None-Match']='"'+actor+':'+revision+'"';
- const r=await fetch('/api/'+path,{method:body?'POST':'GET',headers,body:body&&JSON.stringify(body),cache:'no-store'});
+ let r;
+ try{
+   r=await fetch('/api/'+path,{method:body?'POST':'GET',headers,body:body&&JSON.stringify(body),cache:'no-store',signal:AbortSignal.timeout(15000)});
+ }catch{
+   syncFailed=true;showSync();
+   throw Error('Spojení se serverem se přerušilo. Zkuste akci znovu.');
+ }
+ if(r.status>=500&&path==='state'){syncFailed=true;showSync();}
+ else if(r.ok||r.status===304){lastSync=Date.now();syncFailed=false;showSync();}
  if(r.status===304) return null;
  const data=await r.json();
  if(!r.ok) throw Object.assign(Error(data.error||'Chyba spojení.'),{status:r.status});
@@ -89,40 +127,81 @@ function receive(data){
  const jobsChanged=!wasLive||JSON.stringify(state.jobs)!==JSON.stringify(data.state.jobs);
  const otherChanged=!wasLive||JSON.stringify([state.employees,state.activity,state.shifts,state.occupied,state.owners])!==JSON.stringify([data.state.employees,data.state.activity,data.state.shifts,data.state.occupied,data.state.owners]);
  const previous=actor;
+ const shiftChanged=state?.shiftOpen!==data.state.shiftOpen;
  const driverStatsChanged=wasLive&&page==='activity'&&ownerTab==='drivers'&&
    JSON.stringify(state.driverActivity)!==JSON.stringify(data.state.driverActivity);
  const permissionsChanged=JSON.stringify(permissions)!==JSON.stringify(data.permissions);
  role=data.role; permissions=data.permissions;
- if(!can('gps')&&gps!==null) stopGps();
+ if(!can('gps')&&(gpsRunning()||nativeStarting)) stopGps();
  if(permissionsChanged){
    selected='';
    for(const id of ['location-editor','job-editor','shiftbox']) if($('#'+id).open) $('#'+id).close();
  }
  live=true; actor=data.actor; state=data.state;
+ if(!nativeLocation&&!wasLive&&can('driverRide')&&'serviceWorker' in navigator){
+   navigator.serviceWorker.getRegistration().then(async registration=>{
+     const subscription=await registration?.pushManager?.getSubscription();
+     if(!subscription||!live||actor!==data.actor) return;
+     await api('push',{endpoint:subscription.endpoint});
+     if(!live||actor!==data.actor) return;
+     ridePushEnabled=true;
+     if(page==='driver') renderDriver();
+   }).catch(()=>{});
+ }
+ if(!wasLive||previous!==actor) restoreDrafts();
+ if(shiftChanged&&!state.shiftOpen&&(gpsRunning()||nativeStarting)) stopGps();
  if(!wasLive||actor!==previous){loadMapPreferences();syncMapControls();}
  if(!wasLive||actor!==previous||!canSeePage(page)){
    page=['activity','dispatch','driver','history','settings'].find(canSeePage);
    if(page==='settings') fillProfileForm();
    selected=''; incoming=null;
  }
+ if(state.shiftOpen&&can('gps')&&!gpsRunning()&&(!wasLive||shiftChanged)) startGps();
  const active=can('driverRide')?busy(state,actor):null;
  const newRide=active?.status==='assigned'&&incoming!==active.id;
  if(newRide){
    incoming=active.id;
    page='driver';
-   notify('Nová zakázka č. '+active.id);
-   chimeRide();
-   navigator.vibrate?.([150,80,150]);
+   if(!document.hidden) notify('Nová zakázka č. '+active.id);
+   if(!document.hidden){
+     chimeRide();
+     navigator.vibrate?.([150,80,150]);
+   }
  }else if(active?.status!=='assigned') incoming=null;
  if(fleetHistory()&&can('history')&&data.state.jobs.filter(j=>j.status==='done').length>noticeCount&&wasLive) notify('Zakázka dokončena.');
  noticeCount=state.jobs.filter(j=>j.status==='done').length;
- if(newRide||jobsChanged||otherChanged||permissionsChanged||vehicleChanged||previous!==actor) render();
+ if(shiftChanged||newRide||jobsChanged||otherChanged||permissionsChanged||vehicleChanged||previous!==actor) render();
  else if(driverStatsChanged) refreshDriverStats();
  else if(page==='dispatch'){stats();renderMap();}
  else if(page==='driver'){stats();renderDriverMap();}
 }
+const draftForms=['booking','own-ride'];
+const draftKey=form=>'taximetr.draft.'+actor+'.'+form.id;
+function storeDraft(form,value){
+ try{
+   if(value) sessionStorage.setItem(draftKey(form),JSON.stringify(value));
+   else sessionStorage.removeItem(draftKey(form));
+ }catch{}
+}
+function readDraft(form){
+ try{return JSON.parse(sessionStorage.getItem(draftKey(form)));}
+ catch{return null;}
+}
+function restoreDrafts(){
+ for(const id of draftForms){
+   const form=$('#'+id);
+   const draft=readDraft(form);
+   for(const [name,value] of Object.entries(draft?.fields??{})){
+     if(form.elements[name]) form.elements[name].value=value;
+   }
+ }
+}
+for(const id of draftForms){
+ const form=$('#'+id);
+ form.addEventListener('input',()=>{if(live) storeDraft(form,{fields:Object.fromEntries(new FormData(form))});});
+}
 function lockApp(){
- sessionGeneration++; revision=-1; drivers=[]; vehicles=[]; profile=null; state=null; live=false; stopGps();
+ sessionGeneration++; ridePushEnabled=false; revision=-1; drivers=[]; vehicles=[]; profile=null; state=null; live=false; stopGps();
  for(const form of [$('#booking'),$('#own-ride'),$('#profile-form'),$('#owner-form'),$('#employee-form')]) form.reset();
  for(const dialog of document.querySelectorAll('dialog[open]')) dialog.close();
  $('#activity').replaceChildren();
@@ -387,11 +466,24 @@ function renderQueue(){
  $('#maphint').textContent=selected?driverName(selected)+' · vyberte zakázku':'Vyberte volné vozidlo';
  $('#queue').innerHTML=jobs.map(j=>'<div class="job-card"><details class="job-menu"><summary aria-label="Možnosti zakázky '+j.id+'">⋯</summary><div><button type="button" data-job-edit="cancelJob" data-id="'+j.id+'">Zrušit zakázku</button><button type="button" data-job-edit="editPickupTime" data-id="'+j.id+'">Upravit čas vyzvednutí</button><button type="button" data-job-edit="editJob" data-id="'+j.id+'">Upravit údaje zakázky</button></div></details><button class="job" data-job="'+j.id+'" '+(j.status!=='waiting'||!can('assign')?'disabled':'')+'><div class="jobtop"><b>'+esc(j.name)+'</b><span class="badge">'+statusText[j.status]+'</span></div>'+jobRoute(j)+'<div class="jobfoot"><div class="job-times"><span>Vytvořeno '+jobTime(j.created)+'</span>'+
    (scheduledJob(j)||'<span>Co nejdříve</span>')+(j.driver?'<span>'+esc(driverName(j.driver))+'</span>':'')+
-   '</div><strong>'+cash(j.cents)+'</strong></div></button></div>').join('')||'<p class="empty">Žádné zakázky</p>';
+   '</div><strong>'+cash(j.cents)+'</strong></div></button>'+
+   (j.status==='assigned'?'<div class="assignment-status"><span data-assignment-countdown="'+j.id+'"></span>'+
+     (can('assign')?'<button type="button" data-requeue="'+j.id+'" hidden>Vrátit k přeřazení</button>':'')+'</div>':'')+'</div>').join('')||'<p class="empty">Žádné zakázky</p>';
+ updateAssignmentTimers();
  $('#queue').querySelectorAll('.job-menu').forEach(menu=>{
    menu.hidden=!can('edit')&&!can('cancel');
    menu.querySelectorAll('[data-job-edit]').forEach(button=>button.hidden=!can(button.dataset.jobEdit==='cancelJob'?'cancel':'edit'));
  });
+}
+function updateAssignmentTimers(){
+ if(!live||page!=='dispatch') return;
+ for(const timer of document.querySelectorAll('[data-assignment-countdown]')){
+   const job=state.jobs.find(j=>j.id===Number(timer.dataset.assignmentCountdown));
+   if(job?.status!=='assigned') continue;
+   const remaining=Math.max(0,Math.ceil(((job.assignedAt??job.created)+assignmentTimeout-Date.now())/1000));
+   timer.textContent=remaining?'Čeká na přijetí · '+remaining+' s':'Lhůta pro přijetí vypršela';
+   if(timer.nextElementSibling) timer.nextElementSibling.hidden=remaining>0;
+ }
 }
 function rideTable(jobs){
  if(!jobs.length) return '<p class="empty">V tomto dni nejsou dokončené jízdy.</p>';
@@ -436,7 +528,8 @@ function renderDriver(){
  $('#own-ride fieldset').disabled=Boolean(j);
  $('#own-ride-status').hidden=!j;
  $('#driver-summary').innerHTML='<div class="drivergrid"><div><section class="panel detail ride-panel"><h2>'+(j?.status==='assigned'?'Nová zakázka':'Aktuální zakázka')+'</h2>'+(j?'<p><b>#'+j.id+' · '+esc(j.name)+' · '+cash(j.cents)+'</b></p><p>'+statusText[j.status]+(j.scheduled?' · '+scheduledJob(j):'')+'</p>'+jobRoute(j)+(j.note?'<p>'+esc(j.note)+'</p>':'')+'<div class="ride-actions">'+driverActions(j)+'</div>':'<p>Čekáte na novou zakázku od dispečera.</p>')+
-   '<button type="button" class="ride-sound" data-ride-sound>'+(rideAudio?.state==='running'?'Vyzkoušet zvuk':'Zapnout zvuk zakázek')+'</button></section></div><div><section class="panel detail"><h2>Dostupnost</h2><div class="actions"><button data-availability aria-pressed="'+Boolean(state.occupied?.[actor])+'" '+(j?'disabled':'')+'>'+(state.occupied?.[actor]?'Nastavit jako volný':'Nastavit jako obsazený')+'</button></div></section><section class="panel detail"><h2>Sdílení polohy</h2><p>'+esc(gpsStatus)+'</p><div class="actions"><button data-gps>'+ (gps===null?'Zapnout GPS':'Zastavit GPS')+'</button></div></section><section class="panel detail"><h2>Dnešní jízdy</h2><div class="actions"><button data-page="history">Otevřít denní přehled</button></div></section></div></div>';
+   '<button type="button" class="ride-sound" data-ride-sound>'+(rideAudio?.state==='running'?'Vyzkoušet zvuk':'Zapnout zvuk zakázek')+'</button>'+(nativeLocation?'':'<button type="button" class="ride-sound" data-ride-push>'+
+   (ridePushEnabled?'Oznámení jsou zapnutá':'Zapnout oznámení zakázek')+'</button>')+'</section></div><div><section class="panel detail"><h2>Dostupnost</h2><div class="actions"><button data-availability aria-pressed="'+Boolean(state.occupied?.[actor])+'" '+(j?'disabled':'')+'>'+(state.occupied?.[actor]?'Nastavit jako volný':'Nastavit jako obsazený')+'</button></div></section><section class="panel detail"><h2>Sdílení polohy</h2><p>'+esc(gpsStatus)+'</p><div class="actions"><button data-gps>'+ (!gpsRunning()?(state.shiftOpen?'Obnovit GPS':'Zahájit směnu a zapnout GPS'):'Ukončit směnu')+'</button></div></section><section class="panel detail"><h2>Dnešní jízdy</h2><div class="actions"><button data-page="history">Otevřít denní přehled</button></div></section></div></div>';
  const summary=$('#driver-summary');
  summary.querySelector('section').hidden=!can('driverRide');
  for(const [selector,permission] of [['[data-availability]','availability'],['[data-gps]','gps'],['[data-page="history"]','history']]){
@@ -613,11 +706,13 @@ function renderMap(){
    });
  }).join('');
  if(lastMarkerMarkup!==markers){$('#markers').innerHTML=markers;lastMarkerMarkup=markers;}
- const status=drivers.filter(d=>fresh(state.positions[d.id]));
+ const status=drivers;
  const statusMarkup=status.map(d=>{
    const isOccupied=occupied(d.id);
+   const position=state.positions[d.id];
+   const positionStatus=fresh(position)?'GPS aktuální':position?'GPS zastaralá · '+new Date(position.time).toLocaleTimeString('cs-CZ'):'GPS se nesdílí';
    return '<span class="map-vehicle-status"><i class="'+(isOccupied?'red':'green')+'" aria-hidden="true"></i><strong>'+
-     esc(d.lastName||d.name)+'</strong> · '+(isOccupied?'obsazený':'volný')+vehicleLink(vehicleById(d.vehicleId))+'</span>';
+     esc(d.lastName||d.name)+'</strong> · '+(isOccupied?'obsazený':'volný')+' · '+positionStatus+vehicleLink(vehicleById(d.vehicleId))+'</span>';
  }).join('');
  if(lastStatusMarkup!==statusMarkup){$('#vehicle-status').innerHTML=statusMarkup;lastStatusMarkup=statusMarkup;}
 }
@@ -887,29 +982,39 @@ for(const form of [$('#booking'),$('#own-ride'),$('#job-edit-form')]){
        }
        return;
      }
-     const original=editing?state.jobs.find(job=>job.id===id):null;
-     const locations=await Promise.all(fields.map(async input=>{
-       const typed=f[input.name].trim();
-       const selected=selectedAddresses.get(input);
-       if(selected?.address===typed) return selected;
-       if(original?.[input.name]===typed){
-         return {address:typed,point:input.name==='pickup'?original.pickupPoint:original.target};
+     const draft=editing?null:readDraft(form);
+     let action=draft?.action&&JSON.stringify(draft.fields)===JSON.stringify(f)?draft.action:null;
+     if(!action){
+       const original=editing?state.jobs.find(job=>job.id===id):null;
+       const locations=await Promise.all(fields.map(async input=>{
+         const typed=f[input.name].trim();
+         const selected=selectedAddresses.get(input);
+         if(selected?.address===typed) return selected;
+         if(original?.[input.name]===typed){
+           return {address:typed,point:input.name==='pickup'?original.pickupPoint:original.target};
+         }
+         const {suggestions}=await api('geocode',{address:typed});
+         return exactAddress(typed,suggestions);
+       }));
+       if(generation!==sessionGeneration||fields.some(input=>input.value!==f[input.name])||
+          (editing&&(!$('#job-editor').open||Number(form.dataset.id)!==id||form.dataset.action!==type))) return;
+       const missing=locations.indexOf(null);
+       if(missing!==-1){
+         fields[missing].focus();
+         notify(missing===0?'Vyberte přesnou adresu vyzvednutí z nabídky.':'Vyberte přesnou adresu doručení z nabídky.');
+         return;
        }
-       const {suggestions}=await api('geocode',{address:typed});
-       return exactAddress(typed,suggestions);
-     }));
-     if(generation!==sessionGeneration||fields.some(input=>input.value!==f[input.name])||
-        (editing&&(!$('#job-editor').open||Number(form.dataset.id)!==id||form.dataset.action!==type))) return;
-     const missing=locations.indexOf(null);
-     if(missing!==-1){
-       fields[missing].focus();
-       notify(missing===0?'Vyberte přesnou adresu vyzvednutí z nabídky.':'Vyberte přesnou adresu doručení z nabídky.');
-       return;
+       const [pickup,dropoff]=locations;
+       action={type,id,...f,cents:Math.round(Number(f.price)*100),pickup:pickup.address,dropoff:dropoff.address,pickupPoint:pickup.point,target:dropoff.point};
+       if(!editing){
+         action.requestId=crypto.randomUUID();
+         storeDraft(form,{fields:f,action});
+       }
      }
-     const [pickup,dropoff]=locations;
-     const ok=await perform({type,id,...f,cents:Math.round(Number(f.price)*100),pickup:pickup.address,dropoff:dropoff.address,pickupPoint:pickup.point,target:dropoff.point});
+     const ok=await perform(action);
      if(ok){
        form.reset();
+       if(!editing) storeDraft(form,null);
        if(editing){
          $('#job-editor').close();
          notify('Údaje zakázky uloženy.');
@@ -924,39 +1029,70 @@ for(const form of [$('#booking'),$('#own-ride'),$('#job-edit-form')]){
  });
 }
 function stopGps(){
+ if(nativeLocation&&(nativeTracking||nativeStarting)){
+   nativeGeneration++;
+   nativeTracking=nativeStarting=false;
+   void nativeLocation.stop().catch(()=>{});
+ }
  if(gps!==null) navigator.geolocation.clearWatch(gps);
  clearInterval(gpsHeartbeat); gpsHeartbeat=null; gps=null; gpsText=''; lastGps=0;
 }
-function toggleGps(){
- if(gps!==null){stopGps();render();void perform({type:'gpsStop'},true);return;}
+async function toggleGps(){
+ if(state.shiftOpen&&gpsRunning()){await perform({type:'shiftEnd'});return;}
+ if(!state.shiftOpen&&!(await perform({type:'shiftStart'}))) return;
+ if(!gpsRunning()) startGps();
+}
+async function activateNativeLocation(){
+ if(nativeStarting) return;
+ nativeStarting=true;
+ const generation=nativeGeneration;
+ try{
+   await nativeLocation.start();
+   if(generation!==nativeGeneration) return;
+   nativeTracking=true;
+   gpsText='Nativní sdílení polohy je zapnuté.';
+ }catch(error){
+   if(generation!==nativeGeneration) return;
+   nativeTracking=false;
+   gpsText=typeof error==='string'?error:error.message;
+ }finally{
+   if(generation===nativeGeneration){
+     nativeStarting=false;
+     if(live&&page==='driver') renderDriver();
+   }
+ }
+}
+function startGps(){
+ if(nativeLocation){void activateNativeLocation();return;}
  if(!navigator.geolocation){notify('GPS není v tomto prohlížeči k dispozici.');return;}
  gpsText='Získávám polohu…';
  const options={enableHighAccuracy:true,maximumAge:0,timeout:15000};
+ let watchId;
  let sending=false, queuedFix=null;
  const update=async fix=>{
-   if(gps===null) return;
+   if(gps!==watchId||gps===null||Date.now()-lastGps<5000) return;
    if(!queuedFix||fix.timestamp>=queuedFix.timestamp) queuedFix=fix;
    if(sending) return;
    sending=true;
    try {
-     while(queuedFix&&gps!==null){
+     while(queuedFix&&gps===watchId){
        const {coords,timestamp}=queuedFix;
        queuedFix=null;
        lastGps=Date.now();
        const ok=await perform({type:'gps',lat:coords.latitude,lng:coords.longitude,accuracy:coords.accuracy,measured:timestamp},true);
-       if(gps===null) return;
+       if(gps!==watchId) return;
        gpsText=ok?'Sdílíte polohu · GPS přesnost ±'+Math.round(coords.accuracy)+' m':'Polohu se nepodařilo odeslat.';
        if(page==='driver') renderDriver();
      }
    } finally {sending=false;}
  };
  const failed=e=>{
-   if(gps===null) return;
+   if(gps!==watchId) return;
    if(e.code===1) stopGps();
    gpsText=e.code===1?'Prohlížeč zamítl přístup k poloze.':'Čekám na dostupnou GPS polohu…';
    if(page==='driver') renderDriver();
  };
- gps=navigator.geolocation.watchPosition(update,failed,options);
+ gps=watchId=navigator.geolocation.watchPosition(update,failed,options);
  gpsHeartbeat=setInterval(()=>{
    if(Date.now()-lastGps>=8000) navigator.geolocation.getCurrentPosition(update,failed,options);
  },8000);
@@ -1014,10 +1150,21 @@ document.addEventListener('click',async e=>{
    $('#job-editor').showModal();
    return;
  }
+ if(d.requeue&&can('assign')){
+   const job=state.jobs.find(j=>j.id===Number(d.requeue));
+   if(job&&await perform({type:'requeue',id:job.id,assignedAt:job.assignedAt})){
+     queue='waiting';render();notify('Zakázku můžete přiřadit jinému řidiči.');
+   }
+   return;
+ }
  if(d.job&&can('assign')){
    if(!selected){notify('Nejdříve vyberte volné vozidlo na mapě.');return;}
    const name=driverName(selected);
    if(await perform({type:'assign',id:Number(d.job),driver:selected})) notify('Zakázka přiřazena · '+name);
+   return;
+ }
+ if(d.ridePush!==undefined&&can('driverRide')){
+   await enableRidePush();
    return;
  }
  if(d.rideSound!==undefined&&can('driverRide')){
@@ -1055,7 +1202,7 @@ document.addEventListener('click',async e=>{
    $('#shiftbox').showModal();return;
  }
  if(b.id==='login'){
-   try {await api('logout',{});lockApp();}
+   try {await api('logout',{});for(const id of draftForms) storeDraft($('#'+id),null);lockApp();}
    catch(e){notify(e.message);}
  }
 });
@@ -1086,8 +1233,7 @@ $('#loginform').addEventListener('submit',async e=>{
  submit.disabled=true;
  try{
    const {username,password}=Object.fromEntries(new FormData(f));
-   const payload=username.trim()?{username,password}:{key:password};
-   const data=await api('login',payload);
+   const data=await api('login',{username,password});
    sessionGeneration++;
    receive(data);f.reset();}
  catch(e){notify(e.message);}
@@ -1252,7 +1398,7 @@ const userNameEditor=$('#user-name-editor');
 const displayUserName=user=>[user.firstName,user.lastName].filter(Boolean).join(' ')||user.username;
 function userManagementButtons(user){
  const id=esc(user.id);
- return '<button type="button" data-edit-user="'+id+'">Upravit jméno</button>'+
+ return '<button type="button" data-edit-user="'+id+'">'+(user.configured===false?'Nastavit přihlášení':'Upravit jméno')+'</button>'+
    (user.id===actor?'':'<button type="button" data-remove-user="'+id+'">Odstranit uživatele</button>');
 }
 async function saveManagement(button,path,payload,message,onSaved){
@@ -1275,7 +1421,7 @@ userNameForm.addEventListener('submit',event=>{
  const id=userNameForm.dataset.id;
  const payload={id,...Object.fromEntries(new FormData(userNameForm))};
  void saveManagement(event.submitter??userNameForm.querySelector('[type="submit"]'),
-   'user-name',payload,'Jméno bylo uloženo.',()=>{
+   'user-name',payload,payload.password?'Přihlášení heslem bylo nastaveno.':'Jméno bylo uloženo.',()=>{
      if(userNameForm.dataset.id===id) userNameEditor.close();
      if(id===actor) fillProfileForm();
    });
@@ -1292,6 +1438,10 @@ for(const selector of ['#employee-list','#owner-list']){
      $('#user-name-account').textContent=user.username;
      userNameForm.elements.firstName.value=user.firstName??'';
      userNameForm.elements.lastName.value=user.lastName??'';
+     const enrollment=$('#enroll-user');
+     enrollment.hidden=enrollment.disabled=user.configured!==false;
+     userNameForm.elements.username.value=user.username??'';
+     userNameForm.elements.password.value='';
      userNameEditor.showModal();
    }else if(confirm('Odstranit účet '+displayUserName(user)+'? Uživatel se už nebude moci přihlásit.')){
      void saveManagement(button,'user-remove',{id},'Uživatel byl odstraněn.');
@@ -1354,7 +1504,7 @@ function fillProfileForm(){
  form.elements.confirmPassword.required=!profile.configured;
  $('#profile-password-hint').textContent=profile.configured
    ?'Při změně přihlašovacího jména nebo hesla zadejte stávající heslo. Nové heslo musí mít alespoň 12 znaků.'
-   :'Pro nastavení profilu zadejte stávající přístupový klíč a nové heslo s alespoň 12 znaky.';
+   :'Heslo musí mít alespoň 12 znaků.';
 }
 function renderOwners(){
  $('#owner-settings').hidden=!isOwner(actor);
@@ -1406,16 +1556,35 @@ async function poll(){
  finally{polling=false;}
 }
 render();
-api('state').then(data=>{if(!sessionGeneration) receive(data);}).catch(()=>{});
+async function restoreSession(){
+ const generation=sessionGeneration;
+ try{
+   const data=await api('state');
+   if(data&&generation===sessionGeneration&&!live) receive(data);
+ }catch{}
+}
+void restoreSession();
 if('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(console.error);
 let lastPoll=0;
 setInterval(()=>{
  const now=Date.now();
- const interval=can('driverRide')||page==='dispatch'?1000:3000;
+ const interval=document.hidden&&ridePushEnabled?15000:can('driverRide')||page==='dispatch'?1000:3000;
  if(!live||polling||pending||now-lastPoll<interval) return;
  lastPoll=now;
  void poll();
 },1000);
-setInterval(()=>{if(live&&page==='dispatch'){stats();renderMap();}},1000);
+setInterval(()=>{if(live&&page==='dispatch'){stats();renderMap();updateAssignmentTimers();}},1000);
 setInterval(renderDriverMap,8000);
-document.addEventListener('visibilitychange',()=>{if(!document.hidden) void poll();});
+document.addEventListener('visibilitychange',()=>{
+ if(document.hidden) return;
+ void poll();
+ if(live&&state.shiftOpen&&can('gps')&&nativeLocation){
+   void activateNativeLocation();
+ }else if(live&&state.shiftOpen&&can('gps')&&gps!==null&&Date.now()-lastGps>=15000){
+   stopGps();
+   startGps();
+ }
+});
+
+window.addEventListener('offline',showSync);
+window.addEventListener('online',()=>{showSync();if(live) void poll(); else void restoreSession();});

@@ -7,3 +7,17 @@ self.addEventListener('fetch', event => {
     {headers:{'Content-Type':'text/html; charset=utf-8'}}
   )));
 });
+
+self.addEventListener('push', event=>{
+  event.waitUntil(self.registration.showNotification('taximetr · Nová zakázka',{
+    body:'Otevřete aplikaci a potvrďte přijetí.',
+    icon:'/taximetr-192.png',tag:'new-ride',renotify:true,vibrate:[250,100,250]
+  }));
+});
+self.addEventListener('notificationclick', event=>{
+  event.notification.close();
+  event.waitUntil(self.clients.matchAll({type:'window',includeUncontrolled:true}).then(clients=>{
+    const app=clients.find(client=>new URL(client.url).origin===self.location.origin);
+    return app?app.focus():self.clients.openWindow('/');
+  }));
+});

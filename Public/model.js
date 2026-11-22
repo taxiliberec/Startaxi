@@ -42,10 +42,11 @@ export function allows(permissions,key){
   };
   return permissions.includes(key)&&(prerequisites[key]??[]).every(required=>permissions.includes(required));
 }
+export const assignmentTimeout=60_000;
 export const actionPermissions = Object.freeze({
-  create:'create',assign:'assign',editPickupTime:'edit',editJob:'edit',cancelJob:'cancel',
+  create:'create',assign:'assign',requeue:'assign',editPickupTime:'edit',editJob:'edit',cancelJob:'cancel',
   createOwn:'ownRide',accept:'driverRide',pickup:'driverRide',complete:'driverRide',
-  gps:'gps',availability:'availability',close:'closeShift'
+  gps:'gps',availability:'availability',close:'closeShift',shiftEnd:'gps'
 });
 export const fleet = state => [
   ...drivers.filter(driver=>!state.removedUsers?.[driver.id]).map(driver=>{
@@ -86,6 +87,10 @@ export function change(s,actor,a,now=Date.now()){
     case 'createOwn':
     case 'create': {
       const ownRide=a.type==='createOwn';
+      if(a.requestId!==undefined){
+        requireThat(typeof a.requestId==='string'&&/^[a-f0-9-]{36}$/.test(a.requestId),'Neplatný identifikátor požadavku.');
+        if(s.jobs.some(j=>j.requestId===a.requestId&&j.createdBy===actor)) return false;
+      }
       requireThat(!ownRide||fleet(s).some(d=>d.id===actor),'Přístup zamítnut.');
       if(ownRide){
         requireThat(!busy(s,actor),'Nejdříve dokončete aktuální zakázku.');
@@ -96,7 +101,7 @@ export function change(s,actor,a,now=Date.now()){
       for(const [v,max] of [[name,121],[pickup,200],[dropoff,200]]) requireThat(typeof v==='string'&&v.trim()&&v.length<=max,'Vyplňte povinné údaje.');
       requireThat(typeof note==='string'&&note.length<=1000&&typeof scheduled==='string'&&(!scheduled||/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(scheduled))&&Number.isInteger(cents)&&cents>=0&&cents<=10000000,'Zkontrolujte čas, poznámku a cenu.');
       requireThat(validPoint(pickupPoint)&&validPoint(target),'Vyberte adresu vyzvednutí i doručení se souřadnicemi.');
-      s.jobs.unshift({id:++s.seq,name:name.trim(),pickup:pickup.trim(),dropoff:dropoff.trim(),note,scheduled,cents,target,pickupPoint,created:now,...(ownRide?{driver:actor,status:'accepted',ownRide:true}:{status:'waiting'})});
+      s.jobs.unshift({id:++s.seq,...(a.requestId?{requestId:a.requestId,createdBy:actor}:{}),name:name.trim(),pickup:pickup.trim(),dropoff:dropoff.trim(),note,scheduled,cents,target,pickupPoint,created:now,...(ownRide?{driver:actor,status:'accepted',ownRide:true}:{status:'waiting'})});
       break;
     }
     case 'cancelJob':
@@ -129,7 +134,13 @@ export function change(s,actor,a,now=Date.now()){
       break;
     case 'assign':
       requireThat(job?.status==='waiting'&&fleet(s).some(d=>d.id===a.driver)&&allows(permissionsFor(s,a.driver),'driverRide')&&!busy(s,a.driver)&&!s.occupied?.[a.driver],'Řidič nebo zakázka už nejsou k dispozici.');
-      Object.assign(job,{driver:a.driver,status:'assigned'});
+      Object.assign(job,{driver:a.driver,status:'assigned',assignedAt:now});
+      break;
+    case 'requeue':
+      requireThat(job?.status==='assigned'&&job.assignedAt===a.assignedAt&&now-(job.assignedAt??job.created)>=assignmentTimeout,'Zakázka už není po lhůtě pro přijetí.');
+      job.status='waiting';
+      delete job.driver;
+      delete job.assignedAt;
       break;
     case 'accept':
       requireThat(own&&job.status==='assigned','Zakázku nelze přijmout.');
@@ -150,6 +161,9 @@ export function change(s,actor,a,now=Date.now()){
       if(measured>=(s.positions[actor]?.measured??0)){
         s.positions[actor]={lat:a.lat,lng:a.lng,accuracy:a.accuracy,time:Math.min(measured,now),measured};
       }
+      break;
+    case 'shiftEnd':
+      requireThat(!busy(s,actor)&&!s.jobs.some(j=>j.driver===actor&&j.status==='done'&&!j.shift),'Nejdříve dokončete zakázky a uzavřete směnu.');
       break;
     case 'close': {
       const date=a.date;
