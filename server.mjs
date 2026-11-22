@@ -42,8 +42,8 @@ function postgresStore(connectionString){
   };
 }
 
-if(process.env.RENDER==='true'&&(!process.env.DATABASE_URL||(process.env.TAXI_OWNER_KEY||'').length<24)){
-  throw Error('Pro nasazení je potřeba nastavit DATABASE_URL a klíč majitele o délce alespoň 24 znaků.');
+if(process.env.RENDER==='true'&&!process.env.DATABASE_URL){
+  throw Error('Pro nasazení je potřeba nastavit DATABASE_URL.');
 }
 const DB=process.env.DATABASE_URL?postgresStore(process.env.DATABASE_URL):sqliteStore();
 const port=Number(process.env.PORT||3000);
@@ -64,7 +64,7 @@ createServer(async (req,res)=>{
     }
     const scheme=process.env.TAXI_PROXY_HTTPS==='1'?'https':'http';
     const url=new URL(req.url,scheme+'://'+req.headers.host);
-    const response=await worker.fetch(new Request(url,{method:req.method,headers:req.headers,body:length?Buffer.concat(chunks):undefined}),{DB,TAXI_ACCESS_KEYS:process.env.TAXI_ACCESS_KEYS,TAXI_OWNER_KEY:process.env.TAXI_OWNER_KEY});
+    const response=await worker.fetch(new Request(url,{method:req.method,headers:req.headers,body:length?Buffer.concat(chunks):undefined}),{DB,TAXI_ACCESS_KEYS:process.env.TAXI_ACCESS_KEYS,TAXI_OWNER_KEY:process.env.TAXI_OWNER_KEY,TAXI_OWNER_PASSWORD:process.env.TAXI_OWNER_PASSWORD,TAXI_PUSH_VAPID_JWK:process.env.TAXI_PUSH_VAPID_JWK,TAXI_PUSH_CONTACT:process.env.TAXI_PUSH_CONTACT});
     res.writeHead(response.status,Object.fromEntries(response.headers));
     res.end(Buffer.from(await response.arrayBuffer()));
   }catch{

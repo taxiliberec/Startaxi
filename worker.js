@@ -18,6 +18,8 @@ function accounts(env){
   return Object.entries(configured).filter(([id,key])=>(['owner','dispatch'].includes(id)||drivers.some(d=>d.id===id))&&typeof key==='string'&&key.length>=24);
 }
 async function session(key){return hash('taxi-liberec/session/v1/'+key);}
+const sessionSeconds=400*24*60*60;
+const loginCooldown=15*60*1000;
 const cookie=(token,maxAge)=>'taxi_session='+token+'; Max-Age='+maxAge+'; Path=/; Secure; HttpOnly; SameSite=Strict';
 async function read(db){
   if(db.readState) return db.readState();
@@ -38,7 +40,7 @@ function activePosition(state,id,now){
   const position=state.positions[id];
   if(!position||position.time<=now-45000) return null;
   const active=state.sessions?.[position.sessionId];
-  return position.sessionId==='legacy'||(active?.actor===id&&active.expires>now)?position:null;
+  return active?.actor===id&&active.expires>now?position:null;
 }
 function recordDriverActivity(state,driver,position,now){
   const start=position?.activityAt;
@@ -125,16 +127,20 @@ function view(state,actor,revision,users){
   const now=Date.now();
   const positions=Object.fromEntries(Object.keys(state.positions).flatMap(id=>{
     if(!can('fleetMap')&&(id!==actor||!can('gps'))) return [];
-    const active=activePosition(state,id,now);
-    if(!active) return [];
-    const {sessionId,activityAt,...position}=active;
+    const last=state.positions[id];
+    const active=state.sessions?.[last.sessionId];
+    if(active?.actor!==id||active.expires<=now) return [];
+    const {sessionId,activityAt,...position}=last;
     return [[id,position]];
   }));
   const permitted={
     jobs:state.jobs.filter(job=>job.status==='done'
       ? can('history')&&(allHistory||job.driver===actor)
       : ['waiting','assigned','accepted','onboard'].includes(job.status)&&can('dispatchJobs')
-        || job.status!=='cancelled'&&can('driverRide')&&job.driver===actor),
+        || job.status!=='cancelled'&&can('driverRide')&&job.driver===actor)
+      .map(({requestId,createdBy,...job})=>job),
+    shiftOpen:can('gps')&&Boolean(state.openShifts?.[actor]??state.jobs.some(job=>job.driver===actor&&
+      (['assigned','accepted','onboard'].includes(job.status)||job.status==='done'&&!job.shift))),
     positions,
     shifts:can('history')?state.shifts.filter(shift=>allHistory||shift.driver===actor):[],
     occupied:Object.fromEntries(Object.entries(state.occupied||{}).filter(([id])=>can('fleetMap')||
@@ -270,54 +276,114 @@ async function liberecAddresses(address){
   return [...suggestions.values()].slice(0,50);
 }
 
+const base64url=bytes=>btoa(String.fromCharCode(...bytes)).replaceAll('+','-').replaceAll('/','_').replace(/=+$/,'');
+function pushConfig(env){
+  if(!env.TAXI_PUSH_VAPID_JWK||!env.TAXI_PUSH_CONTACT) return null;
+  let jwk;
+  try{jwk=JSON.parse(env.TAXI_PUSH_VAPID_JWK);}
+  catch{return null;}
+  const {x,y,d}=jwk??{};
+  if(![x,y,d].every(value=>typeof value==='string'&&/^[A-Za-z0-9_-]{43}$/.test(value))) return null;
+  const decodeKey=value=>Uint8Array.from(atob(value.replaceAll('-','+').replaceAll('_','/')),char=>char.charCodeAt(0));
+  const publicKey=base64url([4,...decodeKey(x),...decodeKey(y)]);
+  return {key:{kty:'EC',crv:'P-256',x,y,d},publicKey,contact:env.TAXI_PUSH_CONTACT};
+}
+function pushEndpoint(value){
+  if(typeof value!=='string'||value.length>2048) return null;
+  try{
+    const url=new URL(value);
+    const host=url.hostname;
+    if(url.protocol==='https:'&&!url.port&&!url.username&&!url.password&&!url.hash&&
+       (['fcm.googleapis.com','updates.push.services.mozilla.com','push.services.mozilla.com'].includes(host)||host.endsWith('.push.apple.com'))) return url;
+  }catch{}
+  return null;
+}
+async function sendRidePush(env,state,driver){
+  const config=pushConfig(env);
+  if(!config) return;
+  const now=Date.now(), encoder=new TextEncoder();
+  const key=await crypto.subtle.importKey('jwk',config.key,{name:'ECDSA',namedCurve:'P-256'},false,['sign']);
+  const header=base64url(encoder.encode(JSON.stringify({typ:'JWT',alg:'ES256'})));
+  const expired=[];
+  const outcomes=await Promise.allSettled(Object.entries(state.pushEndpoints??{}).map(async ([id,value])=>{
+    const session=state.sessions?.[id], url=pushEndpoint(value);
+    if(session?.actor!==driver||session.expires<=now||!url) return;
+    const payload=base64url(encoder.encode(JSON.stringify({aud:url.origin,exp:Math.floor(now/1000)+3600,sub:config.contact})));
+    const unsigned=header+'.'+payload;
+    const signature=await crypto.subtle.sign({name:'ECDSA',hash:'SHA-256'},key,encoder.encode(unsigned));
+    const response=await fetch(url,{method:'POST',headers:{
+      Authorization:'vapid t='+unsigned+'.'+base64url(new Uint8Array(signature))+', k='+config.publicKey,
+      TTL:'60',Urgency:'high'
+    },redirect:'error',signal:AbortSignal.timeout(5000)});
+    if(response.status===404||response.status===410) expired.push([id,value]);
+    else if(!response.ok) throw Error('Push služba odmítla oznámení.');
+  }));
+  if(outcomes.some(result=>result.status==='rejected')) console.error('Některá oznámení o zakázce se nepodařilo odeslat.');
+  if(expired.length) await updateState(env.DB,s=>{
+    for(const [id,value] of expired) if(s.pushEndpoints?.[id]===value) delete s.pushEndpoints[id];
+  });
+}
 async function handleApi(request,env,path){
   const origin=request.headers.get('Origin');
   if(request.method==='POST'&&origin&&origin!==new URL(request.url).origin) return json({error:'Přístup zamítnut.'},403);
   const users=accounts(env);
   const token=request.headers.get('Cookie')?.match(/(?:^|;\s*)taxi_session=([a-f0-9]{64})(?:;|$)/)?.[1];
   if(path==='login'&&request.method==='POST'){
-    const {key,username,password}=await decode(request);
-    const current=await read(env.DB);
+    const {username,password}=await decode(request);
     const login=normalizeUsername(username);
-    const account=login?registeredAccounts(current.state).find(entry=>!current.state.removedUsers?.[entry.id]&&entry.username===login):null;
-    let actor;
-    if(login&&typeof password==='string'&&password.length<=128){
-      if(account){
-        if(await passwordHash(password,account.salt)===account.digest) actor=account.id;
-      }else{
-        actor=users.find(([id,value])=>id===login&&!current.state.removedUsers?.[id]&&!storedAccount(current.state,id)&&value===password)?.[0];
-        if(!actor) await passwordHash(password,'taxi-liberec-invalid-user');
-      }
+    if(!/^[a-z0-9._-]{2,40}$/.test(login)||typeof password!=='string'||!password||password.length>128){
+      return json({error:'Zadejte přihlašovací jméno a heslo.'},400);
     }
-    if(!login) actor=users.find(([id,value])=>!current.state.removedUsers?.[id]&&!storedAccount(current.state,id)&&value===key)?.[0];
+    const bucket=await hash(login);
+    let retry=0;
+    const {state:current}=await updateState(env.DB,state=>{
+      retry=0;
+      const now=Date.now();
+      const attempts=(state.loginAttempts??={});
+      for(const [id,entry] of Object.entries(attempts)) if(entry.until<=now) delete attempts[id];
+      const previous=attempts[bucket];
+      if(previous?.count>=6){
+        retry=Math.ceil((previous.until-now)/1000);
+        return false;
+      }
+      attempts[bucket]={count:(previous?.count??0)+1,until:previous?.until??now+loginCooldown};
+    });
+    if(retry) return json({error:'Po šesti pokusech je přihlášení dočasně zablokované. Zkuste to za '+Math.ceil(retry/60)+' min.'},429,{'Retry-After':String(retry)});
+    const account=registeredAccounts(current).find(entry=>!current.removedUsers?.[entry.id]&&entry.username===login);
+    const bootstrap=login==='owner'&&!storedAccount(current,'owner')&&!current.removedUsers?.owner&&validPassword(env.TAXI_OWNER_PASSWORD);
+    const candidate=await passwordHash(password,account?.salt??'taximetr-invalid-login');
+    const actor=account&&candidate===account.digest?account.id:bootstrap&&password===env.TAXI_OWNER_PASSWORD?'owner':null;
     if(!actor) return json({error:'Přihlašovací údaje nejsou platné.'},401);
+    const initial=bootstrap&&actor==='owner'&&!account?await newPassword(password):null;
     const secret=hex(crypto.getRandomValues(new Uint8Array(32)));
     const digest=await session(secret);
-    const expires=Date.now()+43200000;
+    const expires=Date.now()+sessionSeconds*1000;
     const {state,revision}=await updateState(env.DB,s=>{
       const latest=storedAccount(s,actor);
       if(s.removedUsers?.[actor]||latest?.digest!==account?.digest||latest?.username!==account?.username) throw Error('Přihlašovací údaje se změnily. Přihlaste se znovu.');
+      if(initial) (s.profiles??={}).owner={id:'owner',username:'owner',firstName:'',lastName:'',...initial};
+      if(s.loginAttempts) delete s.loginAttempts[bucket];
       s.sessions=Object.fromEntries(Object.entries(s.sessions||{}).filter(([,entry])=>entry.expires>Date.now()));
       s.sessions[digest]={actor,expires};
     });
-    return json(view(state,actor,revision,users),200,{'Set-Cookie':cookie(secret,43200)});
+    return json(view(state,actor,revision,users),200,{'Set-Cookie':cookie(secret,sessionSeconds)});
   }
   const current=token?await read(env.DB):null;
-  const legacy=token?(await Promise.all(users.filter(([id])=>!current.state.removedUsers?.[id]&&!storedAccount(current.state,id)).map(async ([id,key])=>[id,await session(key)]))).find(([,value])=>value===token)?.[0]:null;
   const digest=token?await session(token):null;
   const active=current?.state.sessions?.[digest];
-  const actor=legacy||((active?.expires>Date.now()&&!current.state.removedUsers?.[active.actor])?active.actor:null);
+  const actor=active?.expires>Date.now()&&!current.state.removedUsers?.[active.actor]&&storedAccount(current.state,active.actor)?active.actor:null;
   const checkSession=state=>{
     const entry=state.sessions?.[digest];
-    if(!state.removedUsers?.[actor]&&(legacy?!storedAccount(state,actor):entry?.actor===actor&&entry.expires>Date.now())) return;
+    if(!state.removedUsers?.[actor]&&storedAccount(state,actor)&&entry?.actor===actor&&entry.expires>Date.now()) return;
     throw Error('Přihlaste se znovu.');
   };
   if(path==='logout'&&request.method==='POST'){
-    if(active||legacy) await updateState(env.DB,state=>{
-      if(active) delete state.sessions[digest];
-      const driver=active?.actor||legacy;
+    if(active) await updateState(env.DB,state=>{
+      delete state.sessions[digest];
+      if(state.pushEndpoints) delete state.pushEndpoints[digest];
+      const driver=active.actor;
       const position=state.positions[driver];
-      if(position?.sessionId===(legacy?'legacy':digest)){
+      if(position?.sessionId===digest){
         recordDriverActivity(state,driver,position,Date.now());
         delete state.positions[driver];
       }
@@ -325,7 +391,39 @@ async function handleApi(request,env,path){
     return json({ok:true},200,{'Set-Cookie':cookie('',0)});
   }
   if(!actor) return json({error:'Přihlaste se.'},401);
+  if(path==='push'&&allows(permissionsFor(current.state,actor),'driverRide')){
+    const config=pushConfig(env);
+    if(!config) return json({error:'Oznámení zatím nejsou nastavená na serveru.'},503);
+    if(request.method==='GET') return json({publicKey:config.publicKey});
+    if(request.method==='POST'){
+      const {endpoint}=await decode(request);
+      const url=pushEndpoint(endpoint);
+      if(!url) return json({error:'Tato služba oznámení není podporovaná.'},400);
+      await updateState(env.DB,s=>{
+        checkSession(s);
+        if(!allows(permissionsFor(s,actor),'driverRide')) throw new AccessDenied('Přístup zamítnut.');
+        const endpoints=(s.pushEndpoints??={});
+        let changed=endpoints[digest]!==url.href;
+        for(const id of Object.keys(endpoints)){
+          if((id!==digest&&endpoints[id]===url.href)||!s.sessions[id]||s.sessions[id].expires<=Date.now()){
+            delete endpoints[id];
+            changed=true;
+          }
+        }
+        if(!changed) return false;
+        endpoints[digest]=url.href;
+      });
+      return json({ok:true});
+    }
+  }
   if(path==='state'&&request.method==='GET'){
+    if(active.expires<Date.now()+(sessionSeconds-7*86400)*1000){
+      const {state,revision}=await updateState(env.DB,s=>{
+        checkSession(s);
+        s.sessions[digest].expires=Date.now()+sessionSeconds*1000;
+      });
+      return json(view(state,actor,revision,users),200,{'Set-Cookie':cookie(token,sessionSeconds)});
+    }
     const tag='"'+actor+':'+current.revision+'"';
     const headers={'Cache-Control':'no-store','ETag':tag};
     if(request.headers.get('If-None-Match')===tag) return new Response(null,{status:304,headers});
@@ -336,18 +434,15 @@ async function handleApi(request,env,path){
     const fields=profileInput(input);
     const account=storedAccount(current.state,actor);
     const password=input.newPassword;
-    const changePassword=Boolean(password)||!account;
+    const changePassword=Boolean(password);
     if(changePassword||fields.username!==account.username){
       const currentPassword=input.currentPassword;
-      const valid=typeof currentPassword==='string'&&(
-        account?currentPassword.length<=128&&await passwordHash(currentPassword,account.salt)===account.digest
-          :users.some(([id,key])=>id===actor&&currentPassword===key)
-      );
-      if(!valid) return json({error:'Stávající heslo nebo přístupový klíč není správný.'},400);
+      if(typeof currentPassword!=='string'||currentPassword.length>128||
+         await passwordHash(currentPassword,account.salt)!==account.digest){
+        return json({error:'Stávající heslo není správné.'},400);
+      }
     }
     const credentials=changePassword?await newPassword(password):{salt:account.salt,digest:account.digest};
-    const secret=legacy?hex(crypto.getRandomValues(new Uint8Array(32))):null;
-    const retainedSession=secret?await session(secret):digest;
     const {state,revision}=await updateState(env.DB,s=>{
       checkSession(s);
       const latest=storedAccount(s,actor);
@@ -357,17 +452,13 @@ async function handleApi(request,env,path){
       if(s.employees?.[actor]) s.employees[actor]=entry;
       else (s.profiles??={})[actor]=entry;
       if(s.userNames) delete s.userNames[actor];
-      if(secret){
-        (s.sessions??={})[retainedSession]={actor,expires:Date.now()+43200000};
-        if(s.positions[actor]?.sessionId==='legacy') s.positions[actor].sessionId=retainedSession;
-      }
       if(changePassword||fields.username!==account.username){
         for(const [id,session] of Object.entries(s.sessions||{})){
-          if(session.actor===actor&&id!==retainedSession) delete s.sessions[id];
+          if(session.actor===actor&&id!==digest) delete s.sessions[id];
         }
       }
     });
-    return json(view(state,actor,revision,users),200,secret?{'Set-Cookie':cookie(secret,43200)}:{});
+    return json(view(state,actor,revision,users));
   }
   if(path.startsWith('vehicle-photo/')&&request.method==='GET'){
     const id=path.slice('vehicle-photo/'.length);
@@ -383,6 +474,7 @@ async function handleApi(request,env,path){
     if(!isOwner(actor)) return json({error:'Přístup zamítnut.'},403);
     const input=await decode(request);
     const {id}=input;
+    const enrollment=path==='user-name'&&input.password?{fields:profileInput(input),credentials:await newPassword(input.password)}:null;
     if(typeof id!=='string'||!id) return json({error:'Neplatný identifikátor.'},400);
     const {state,revision}=await updateState(env.DB,s=>{
       checkSession(s);
@@ -402,7 +494,13 @@ async function handleApi(request,env,path){
         const firstName=cleanName(input.firstName), lastName=cleanName(input.lastName);
         if(!firstName||!lastName||firstName.length>80||lastName.length>80) throw Error('Vyplňte jméno a příjmení.');
         const account=storedAccount(s,id);
-        if(account) Object.assign(account,{firstName,lastName});
+        if(enrollment){
+          if(account) throw Error('Tento účet už má nastavené heslo.');
+          checkUsername(s,users,enrollment.fields.username,id);
+          (s.profiles??={})[id]={id,...enrollment.fields,...enrollment.credentials};
+          if(s.userNames) delete s.userNames[id];
+          for(const [sessionId,entry] of Object.entries(s.sessions??{})) if(entry.actor===id) delete s.sessions[sessionId];
+        }else if(account) Object.assign(account,{firstName,lastName});
         else (s.userNames??={})[id]={firstName,lastName};
         record(s,actor,'userRenamed',firstName+' '+lastName);
         return;
@@ -546,9 +644,15 @@ async function handleApi(request,env,path){
   if(path==='action'&&request.method==='POST'){
     const action=await decode(request);
     const {state,revision}=await updateState(env.DB,s=>{
-      const sessionId=legacy?'legacy':digest;
+      const sessionId=digest;
       checkSession(s);
       const now=Date.now();
+      if(action.type==='shiftStart'){
+        if(!allows(permissionsFor(s,actor),'gps')) throw new AccessDenied('Přístup zamítnut.');
+        if(s.openShifts?.[actor]) return false;
+        (s.openShifts??={})[actor]=true;
+        return;
+      }
       if(action.type==='gpsStop'){
         if(s.positions[actor]?.sessionId!==sessionId) return false;
         recordDriverActivity(s,actor,s.positions[actor],now);
@@ -556,12 +660,24 @@ async function handleApi(request,env,path){
         return;
       }
       if(Object.hasOwn(actionPermissions,action.type)&&!allows(permissionsFor(s,actor),actionPermissions[action.type])) throw new AccessDenied('Přístup zamítnut.');
+      if(action.type==='gps'&&s.openShifts?.[actor]===false) throw Error('Nejdříve zahajte směnu.');
       if(action.type==='assign'&&!activePosition(s,action.driver,Date.now())) throw Error('Řidič nesdílí aktuální polohu.');
       const previous=s.positions[actor];
-      change(s,actor,action,now);
+      if(change(s,actor,action,now)===false) return false;
+      if(action.type==='createOwn'&&allows(permissionsFor(s,actor),'gps')) (s.openShifts??={})[actor]=true;
+      if(action.type==='assign'&&allows(permissionsFor(s,action.driver),'gps')) (s.openShifts??={})[action.driver]=true;
+      if(action.type==='close'||action.type==='shiftEnd'){
+        if(action.type==='close'&&s.jobs.some(job=>job.driver===actor&&job.status==='done'&&!job.shift)){
+          record(s,actor,action.type,action.date);
+          return;
+        }
+        (s.openShifts??={})[actor]=false;
+        recordDriverActivity(s,actor,previous,now);
+        delete s.positions[actor];
+      }
       if(action.type==='gps'){
         if(previous===s.positions[actor]) return false;
-        const expiry=previous?.sessionId==='legacy'?now:s.sessions?.[previous?.sessionId]?.expires;
+        const expiry=s.sessions?.[previous?.sessionId]?.expires;
         if(expiry) recordDriverActivity(s,actor,previous,Math.min(now,expiry));
         s.positions[actor].sessionId=sessionId;
         if(s.positions[actor].time>now-45000) s.positions[actor].activityAt=now;
@@ -570,6 +686,7 @@ async function handleApi(request,env,path){
       if(action.type==='availability') return;
       record(s,actor,action.type,['create','createOwn'].includes(action.type)?s.seq:action.id??action.date);
     });
+    if(action.type==='assign') void sendRidePush(env,state,action.driver).catch(()=>console.error('Oznámení o nové zakázce se nepodařilo odeslat.'));
     return json(view(state,actor,revision,users));
   }
   return json({error:'Stránka neexistuje.'},404);
