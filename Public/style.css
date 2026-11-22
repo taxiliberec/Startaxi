@@ -167,3 +167,8 @@
 .location-pin { transform-origin: 50% 87.5%; filter: drop-shadow(0 2px 3px #172c4870); }
 .location-pin svg { width: 42px; height: 42px; fill: #ffe9e8; stroke: #ae1a2b; stroke-width: 1.8; }
 @media (prefers-reduced-motion: reduce) { #map .marker[data-car].selected::after { animation: none; opacity: 0; } }
+
+#sync-status { display: block; font-size: 0.8rem; }
+.assignment-status { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; padding: 0 0.75rem 0.75rem; }
+.assignment-status span { font-size: 0.85rem; }
+.ride-panel [data-ride-push] { margin-inline-start: 0.5rem; }

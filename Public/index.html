@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="cs"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#101827"><link rel="manifest" href="/manifest.webmanifest"><link rel="icon" href="/taximetr.svg" type="image/svg+xml"><link rel="apple-touch-icon" href="/taximetr-192.png"><title>taximetr · Dispečink</title><link rel="stylesheet" href="/style.css"><script type="module" src="/app.js"></script></head>
-<body><header class="top" hidden><div class="brand"><img class="brand-logo" src="/taximetr-192.png" alt="taximetr"><div><b>taximetr</b><small>DISPEČERSKÝ SYSTÉM</small></div></div><nav><button data-page="dispatch"><i data-icon="grid"></i>Dispečink</button><button data-page="driver" hidden><i data-icon="taxi"></i>Moje vozidlo</button><button data-page="history"><i data-icon="chart"></i>Denní přehled</button><button data-page="activity" hidden><i data-icon="list"></i>Majitel</button><button data-page="settings">Nastavení</button></nav><div class="account"><span id="connection">Ukázková data</span><button id="login" aria-label="Přihlášení">Přihlásit se</button></div></header>
+<body><header class="top" hidden><div class="brand"><img class="brand-logo" src="/taximetr-192.png" alt="taximetr"><div><b>taximetr</b><small>DISPEČERSKÝ SYSTÉM</small></div></div><nav><button data-page="dispatch"><i data-icon="grid"></i>Dispečink</button><button data-page="driver" hidden><i data-icon="taxi"></i>Moje vozidlo</button><button data-page="history"><i data-icon="chart"></i>Denní přehled</button><button data-page="activity" hidden><i data-icon="list"></i>Majitel</button><button data-page="settings">Nastavení</button></nav><div class="account"><span id="sync-status" role="status"></span><span id="connection">Ukázková data</span><button id="login" aria-label="Přihlášení">Přihlásit se</button></div></header>
 <main id="app" hidden><div class="intro"><div><p class="eyebrow"><span></span> PROVOZ TAXI LIBEREC</p><h1 id="title">Dispečink</h1><p id="subtitle">Spravujte zakázky a sledujte polohu vozidel v Liberci.</p></div><div class="today"><i data-icon="calendar"></i><span id="today"></span></div></div><div id="stats" class="stats"></div>
 <div id="dispatch" class="workspace"><section class="panel formpanel" data-permission="create"><div class="panelhead"><span class="headicon" data-icon="plus"></span><div><h2>Nová zakázka</h2><p>Údaje z telefonické objednávky</p></div></div><form id="booking"><label>Jméno a příjmení<input name="name" required maxlength="120" placeholder="Např. Jan Novák"></label><label>Místo vyzvednutí<div class="field"><i data-icon="pin"></i><input name="pickup" required maxlength="200" placeholder="Ulice a číslo, Liberec"></div></label><label>Místo doručení<div class="field"><i data-icon="flag"></i><input name="dropoff" required maxlength="200" placeholder="Cílová adresa"></div></label><label>Pozdější čas vyzvednutí <small>Volitelné</small><input type="datetime-local" name="scheduled"></label><label>Poznámka <small>Volitelné</small><textarea name="note" maxlength="1000" placeholder="Např. vyzvednout u hlavního vchodu" rows="2"></textarea></label><label>Cena cesty<div class="field suffix"><input name="price" type="number" min="0" max="100000" step=".01" required placeholder="0"><span>Kč</span></div></label><button class="primary" type="submit"><i data-icon="plus"></i> Vytvořit zakázku</button></form></section>
 <section class="panel mappanel" data-permission="fleetMap"><div class="panelhead"><span class="headicon" data-icon="map"></span><div><h2>Mapa vozidel</h2><p>Liberec a okolí</p></div><label class="map-style">Podklad<select id="fleet-map-style"></select></label></div><div id="map" aria-label="Mapa Liberce"><div id="tiles"></div><div id="markers"></div><div class="maptools"><button data-zoom="1" aria-label="Přiblížit">+</button><button data-zoom="-1" aria-label="Oddálit">−</button><button data-zoom="0" aria-label="Vycentrovat">◎</button></div><div class="mapcredit">© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a></div></div><div id="vehicle-status" class="vehicle-status" aria-label="Vozidla sdílející polohu"></div><div class="legend"><span><em class="green"></em> Volný</span><span><em class="red"></em> Obsazený</span><span><em class="orange"></em> Blízko cíle</span><span><em class="pickup-marker"></em> Vyzvednutí</span><span><em class="destination-marker"></em> Doručení</span><span class="maphint" id="maphint">Vyberte volné vozidlo</span></div></section>
@@ -38,7 +38,7 @@
       <label>Příjmení<input name="lastName" required maxlength="80" autocomplete="family-name"></label>
       <label>Přihlašovací jméno<input name="username" required pattern="[a-zA-Z0-9._\-]{2,40}" autocomplete="username" autocapitalize="none"></label>
       <p id="profile-password-hint"></p>
-      <label>Stávající heslo nebo přístupový klíč<input name="currentPassword" type="password" autocomplete="current-password"></label>
+      <label>Stávající heslo<input name="currentPassword" type="password" autocomplete="current-password"></label>
       <label>Nové heslo<input name="newPassword" type="password" minlength="12" maxlength="128" autocomplete="new-password"></label>
       <label>Zopakujte nové heslo<input name="confirmPassword" type="password" minlength="12" maxlength="128" autocomplete="new-password"></label>
       <button class="primary" type="submit">Uložit profil</button>
@@ -105,7 +105,12 @@
     <p id="user-name-account"></p>
     <label>Jméno<input name="firstName" maxlength="80" required></label>
     <label>Příjmení<input name="lastName" maxlength="80" required></label>
-    <div class="actions"><button type="button" data-close>Zpět</button><button type="submit" class="primary">Uložit jméno</button></div>
+    <fieldset id="enroll-user" hidden disabled>
+      <legend>Převést účet na přihlášení heslem</legend>
+      <label>Přihlašovací jméno<input name="username" minlength="2" maxlength="40" autocomplete="off" required></label>
+      <label>Nové heslo<input name="password" type="password" minlength="12" maxlength="128" autocomplete="new-password" required></label>
+    </fieldset>
+    <div class="actions"><button type="button" data-close>Zpět</button><button type="submit" class="primary">Uložit účet</button></div>
   </form>
 </dialog>
 <dialog id="permission-editor">
@@ -117,7 +122,7 @@
   </form>
 </dialog>
 </main>
-<section id="loginbox" aria-labelledby="login-title"><form id="loginform"><img class="login-logo" src="/taximetr-192.png" alt="taximetr"><h1 id="login-title">Přihlášení zaměstnanců</h1><label>Přihlašovací jméno<input name="username" autocomplete="username" autocapitalize="none"></label><label>Heslo nebo přístupový klíč<input type="password" name="password" required autocomplete="current-password"></label><small>Se stávajícím přístupovým klíčem můžete jméno nechat prázdné.</small><div class="actions"><button class="primary">Přihlásit</button></div></form></section>
+<section id="loginbox" aria-labelledby="login-title"><form id="loginform"><img class="login-logo" src="/taximetr-192.png" alt="taximetr"><h1 id="login-title">Přihlášení zaměstnanců</h1><label>Přihlašovací jméno<input name="username" required autocomplete="username" autocapitalize="none"></label><label>Heslo<input type="password" name="password" required autocomplete="current-password"></label><div class="actions"><button class="primary">Přihlásit</button></div></form></section>
 <dialog id="job-editor">
   <form id="job-edit-form">
     <h2 id="job-edit-title"></h2>
