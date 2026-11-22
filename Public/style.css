@@ -37,8 +37,6 @@
 .marker[data-car] { z-index:2; }
 .maptools, .mapcredit { z-index:3; }
 .mapcredit a { color:inherit; }
-.vehicle-status { padding:8px 14px 0; margin:0; font-size:13px; }
-.vehicle-status:empty { display:none; }
 
 .job-card { position:relative; }
 .job-card .job { width:100%; }
@@ -75,8 +73,6 @@
 .map-style select { height: auto; padding: 5px; }
 .map-driver-label { position: absolute; transform: translate(-50%, 22px); display: grid; justify-items: center; gap: 2px; padding: 3px 6px; color: #23314a; background: #fff; border-radius: 5px; box-shadow: 0 1px 4px #0002; white-space: nowrap; font-size: 11px; }
 .map-driver-label button { pointer-events: auto; }
-#vehicle-status { display: flex; flex-wrap: wrap; gap: 8px 16px; }
-#vehicle-status button { margin-left: 5px; }
 .vehicle-link { border: 0; padding: 0; color: #2455cc; background: transparent; text-decoration: underline; text-align: left; }
 .employee-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: flex-start; }
 .vehicle-heading { display: flex; align-items: center; gap: 8px; }
@@ -162,8 +158,15 @@
 @keyframes map-selected-pulse { from { opacity: .8; scale: 1; } to { opacity: 0; scale: 1.5; } }
 .destination-marker { background: #6d28a8; }
 #map .map-driver-label, #driver-map .marker small { border: 1px solid #e0e6ec; border-radius: 8px; padding: 4px 7px; box-shadow: 0 3px 10px #182c412e; }
-.map-vehicle-status { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 5px; padding: 4px 8px; border-radius: 8px; background: #f0f4f8; }
-.map-vehicle-status i { width: 8px; height: 8px; border-radius: 50%; }
+.vehicle-status:not([hidden]):not(:empty) { display: grid; flex: 1; align-self: center; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 6px 12px; margin-inline: 16px; }
+.map-vehicle-status { display: grid; grid-template-columns: 12px 1fr; align-items: center; column-gap: 7px; min-width: 0; font-size: 13px; }
+.map-vehicle-status i { width: 10px; height: 10px; border-radius: 50%; }
+.driver-status-name { font-weight: 600; }
+.driver-status-text { grid-column: 2; color: var(--muted); font-size: 11px; }
+@media(max-width: 850px) {
+  .intro { flex-wrap: wrap; }
+  .vehicle-status:not([hidden]):not(:empty) { order: 1; flex-basis: 100%; margin-inline: 0; }
+}
 .location-pin { transform-origin: 50% 87.5%; filter: drop-shadow(0 2px 3px #172c4870); }
 .location-pin svg { width: 42px; height: 42px; fill: #ffe9e8; stroke: #ae1a2b; stroke-width: 1.8; }
 @media (prefers-reduced-motion: reduce) { #map .marker[data-car].selected::after { animation: none; opacity: 0; } }

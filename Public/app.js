@@ -253,6 +253,7 @@ function render(){
  $('#settings').hidden=page!=='settings';
  if(page==='settings'){renderOwners();renderUserSettings();renderFleetSettings();}
  document.querySelectorAll('[data-permission]').forEach(el=>el.hidden=!can(el.dataset.permission));
+ $('#vehicle-status').hidden=page!=='dispatch'||!can('fleetMap');
  $('#driver-map-panel').hidden=!can('gps')&&!can('driverRide');
  $('#dispatch').setAttribute('data-panels',['create','fleetMap','dispatchJobs'].filter(can).length);
  document.querySelectorAll('[data-page]').forEach(b=>{
@@ -674,20 +675,33 @@ function renderDriverMap(){
    lastDriverMapMarkers=markers;
  }
 }
+function driverStatus(id, position, job){
+ if(job?.status==='onboard'&&validPoint(job.target)&&meters(position,job.target)<=2000){
+   return {color:'orange',label:'Blízko cíle'};
+ }
+ return occupied(id)?{color:'red',label:'Obsazený'}:{color:'green',label:'Volný'};
+}
 let lastMarkerMarkup, lastStatusMarkup;
 function renderMap(){
+ if(!live||page!=='dispatch'||!can('fleetMap')) return;
+ const activeDrivers=drivers.filter(driver=>fresh(state.positions[driver.id])).map(driver=>{
+   const position=state.positions[driver.id], job=busy(state,driver.id);
+   return {driver,position,job,...driverStatus(driver.id,position,job)};
+ });
+ const statusMarkup=activeDrivers.map(({driver,color,label})=>
+   '<span class="map-vehicle-status" title="'+esc(driver.name+' · '+label)+'">'+
+     '<i class="'+color+'" aria-hidden="true"></i><span class="driver-status-name">'+esc(driver.name)+'</span>'+
+     '<span class="driver-status-text">'+label+'</span></span>'
+ ).join('');
+ if(lastStatusMarkup!==statusMarkup){$('#vehicle-status').innerHTML=statusMarkup;lastStatusMarkup=statusMarkup;}
  const map=$('#map'), w=map.clientWidth,h=map.clientHeight;
- if(!live||page!=='dispatch'||!can('fleetMap')||!w||!h) return;
+ if(!w||!h) return;
  const c=project(center), x=c.x-w/2-offset.x,y=c.y-h/2-offset.y;
  renderTiles($('#tiles'),'fleet',zoom,x,y,w,h);
- const markers=drivers.map(d=>{
-   const p=state.positions[d.id];
-   if(!fresh(p)) return '';
-   const j=busy(state,d.id), point=project(p);
+ const markers=activeDrivers.map(({driver:d,position:p,job:j,color,label:status})=>{
+   const point=project(p);
    if(point.x-x<0||point.x-x>w||point.y-y<0||point.y-y>h) return '';
-   const distance=j?.status==='onboard'&&j.target&&fresh(p)?meters(p,j.target):null;
-   const color=distance!==null&&distance<=2000?'orange':occupied(d.id)?'red':'green';
-     const label=d.name+' · '+(j?statusText[j.status]:occupied(d.id)?'obsazený':'volný')+(p.accuracy!=null?' · ±'+Math.round(p.accuracy)+' m':'');
+   const label=d.name+' · '+(j?statusText[j.status]:status)+(p.accuracy!=null?' · ±'+Math.round(p.accuracy)+' m':'');
    const markerPosition='left:'+(point.x-x)+'px;top:'+(point.y-y)+'px';
    const vehicle=vehicleById(d.vehicleId);
    const marker='<button type="button" '+(can('assign')?'':'disabled ')+'class="marker '+color+(selected===d.id?' selected':'')+'" style="'+markerPosition+'" data-car="'+esc(d.id)+'" title="'+esc(label)+'" aria-label="'+esc(label)+'" aria-pressed="'+(selected===d.id)+'">'+icon('taxi')+'</button>';
@@ -706,15 +720,7 @@ function renderMap(){
    });
  }).join('');
  if(lastMarkerMarkup!==markers){$('#markers').innerHTML=markers;lastMarkerMarkup=markers;}
- const status=drivers;
- const statusMarkup=status.map(d=>{
-   const isOccupied=occupied(d.id);
-   const position=state.positions[d.id];
-   const positionStatus=fresh(position)?'GPS aktuální':position?'GPS zastaralá · '+new Date(position.time).toLocaleTimeString('cs-CZ'):'GPS se nesdílí';
-   return '<span class="map-vehicle-status"><i class="'+(isOccupied?'red':'green')+'" aria-hidden="true"></i><strong>'+
-     esc(d.lastName||d.name)+'</strong> · '+(isOccupied?'obsazený':'volný')+' · '+positionStatus+vehicleLink(vehicleById(d.vehicleId))+'</span>';
- }).join('');
- if(lastStatusMarkup!==statusMarkup){$('#vehicle-status').innerHTML=statusMarkup;lastStatusMarkup=statusMarkup;}
+
 }
 let drag, mapFrame;
 $('#map').addEventListener('pointerdown',e=>{
