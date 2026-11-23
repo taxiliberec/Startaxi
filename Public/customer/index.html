@@ -11,7 +11,7 @@
   <link rel="stylesheet" href="./leaflet.css">
   <link rel="stylesheet" href="./style.css">
   <script defer src="./leaflet.js"></script>
-  <script type="module" src="./app.js?rev=2"></script>
+  <script type="module" src="./app.js?rev=3"></script>
 </head>
 <body>
   <main id="auth">
@@ -76,6 +76,7 @@
           <label>Vyzvednutí<select name="timing"><option value="now">Co nejdřív</option><option value="later">Na určitý čas</option></select></label>
           <label id="scheduled-label" hidden>Datum a čas (Česko)<input name="scheduled" type="datetime-local" disabled></label>
           <fieldset><legend>Platba po jízdě</legend><div class="payment"><label><input type="radio" name="payment" value="cash" checked> Hotově</label><label><input type="radio" name="payment" value="card"> Kartou u řidiče</label></div></fieldset>
+          <label id="booking-reward" hidden>Věrnostní odměna<select name="rewardKey" disabled></select></label>
           <p id="fare-preview" role="status" hidden></p>
           <button class="primary" type="submit">Odeslat objednávku</button>
         </form>

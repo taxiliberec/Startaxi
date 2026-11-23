@@ -25,12 +25,66 @@ function customerSettings(input){
   }
   return {
     fareMode,
+    ...(input.loyalty?{loyalty:customerLoyaltySettings(input.loyalty)}:{}),
     ...(fareMode==='fixed'?{fixedFare}:{}),
     phone:customerText(input.phone,32),
     email:customerText(input.email,254),
     hours:customerText(input.hours,200),
     offers:customerText(input.offers,2000).split('\n').map(line=>line.trim()).filter(Boolean)
   };
+}
+function customerLoyaltySettings(input){
+  const pointsPerRide=Number(input.pointsPerRide);
+  const enabled=input.enabled===true;
+  if(!Array.isArray(input.rewards)||input.rewards.length>10||
+     !Number.isInteger(pointsPerRide)||pointsPerRide<1||pointsPerRide>1000||
+     (enabled&&!input.rewards.length)) throw Error('Nastavte body za jízdu a nejméně jednu odměnu.');
+  const rewards=input.rewards.map(({name,unit,threshold,discount})=>{
+    name=customerText(name,60,true);
+    threshold=Number(threshold);
+    discount=Number(discount);
+    if(!['points','rides'].includes(unit)||!Number.isInteger(threshold)||threshold<1||threshold>10000||
+       !Number.isInteger(discount)||discount<1||discount>10000) throw Error('Zadejte platnou hranici a slevu pro každou odměnu.');
+    return {key:[unit,threshold,discount].join(':'),name,unit,threshold,discount};
+  });
+  if(new Set(rewards.map(reward=>reward.key)).size!==rewards.length) throw Error('Každá odměna musí mít jinou hranici nebo slevu.');
+  return {enabled,pointsPerRide,rewards};
+}
+function customerLoyalty(state,customerId){
+  const policy=state.customerSettings?.loyalty;
+  if(!policy?.enabled) return null;
+  const jobs=state.jobs.filter(job=>job.customerId===customerId);
+  const used=new Map();
+  for(const job of jobs){
+    if(job.status==='cancelled') continue;
+    for(const {id,points} of job.rewardCredits??[]) used.set(id,(used.get(id)??0)+points);
+  }
+  const credits=jobs.flatMap(job=>{
+    if(job.status!=='done'||!job.loyaltyPoints) return [];
+    const points=job.loyaltyPoints-(used.get(job.id)??0);
+    return points>0?[{id:job.id,points,whole:points===job.loyaltyPoints}]:[];
+  }).sort((a,b)=>a.id-b.id);
+  const points=credits.reduce((total,credit)=>total+credit.points,0);
+  const rides=credits.filter(credit=>credit.whole).length;
+  const rewards=policy.rewards.map(reward=>({...reward,available:(reward.unit==='points'?points:rides)>=reward.threshold}));
+  return {points,rides,pointsPerRide:policy.pointsPerRide,rewards,credits};
+}
+function customerReward(loyalty,key,cents){
+  if(cents===null) return null;
+  const reward=loyalty?.rewards.find(reward=>reward.key===key&&reward.available);
+  if(!reward) return null;
+  const discountCents=Math.min(cents,reward.discount*100);
+  if(discountCents<=0) return null;
+  let remaining=reward.threshold;
+  const credits=[];
+  for(const credit of loyalty.credits){
+    if(!remaining) break;
+    if(reward.unit==='rides'&&!credit.whole) continue;
+    const points=reward.unit==='rides'?credit.points:Math.min(remaining,credit.points);
+    credits.push({id:credit.id,points});
+    remaining-=reward.unit==='rides'?1:points;
+  }
+  return {discountCents,credits,name:reward.name};
 }
 function customerUsername(value){
   const username=normalizeUsername(value);
@@ -106,9 +160,10 @@ function customerFare(state,ride,route,now=Date.now()){
   const adjustment=waiting===0&&available>0?-30:Math.min(150,Math.max(0,waiting-available)*30);
   return (base+adjustment)*100;
 }
-const customerRide=({id,pickup,dropoff,scheduled,payment,created,done,status,confirmedAt,cents,priceSet})=>({
+const customerRide=({id,pickup,dropoff,scheduled,payment,created,done,status,confirmedAt,cents,priceSet,rewardDiscountCents,rewardName})=>({
   id,pickup,dropoff,scheduled,payment,created,done,
-  status:status==='waiting'&&confirmedAt?'confirmed':status,cents:status==='done'||priceSet?cents:null
+  status:status==='waiting'&&confirmedAt?'confirmed':status,cents:status==='done'||priceSet?cents:null,
+  ...(rewardDiscountCents?{rewardDiscountCents,rewardName}:{})
 });
 async function customerApi(request,env,action){
   const db=env.DB,method=request.method;
@@ -169,7 +224,13 @@ async function customerApi(request,env,action){
   }
   if(!account) return json({error:'Přihlaste se.'},401);
   if(method==='GET'&&action==='profile') return json(customerProfile(account));
-  if(method==='GET'&&action==='info') return json(state.customerSettings||{});
+  if(method==='GET'&&action==='info'){
+    const {loyalty:policy,...settings}=state.customerSettings||{};
+    const loyalty=customerLoyalty(state,account.id);
+    if(!loyalty) return json(settings);
+    const {credits,...progress}=loyalty;
+    return json({...settings,loyalty:progress});
+  }
   if(method==='GET'&&action==='rides') return json(state.jobs.filter(job=>job.customerId===account.id).map(customerRide));
   if(post&&['geocode','reverse-geocode'].includes(action)){
     const limited=await customerThrottle(db,'geocode',account.id,180);
@@ -196,11 +257,16 @@ async function customerApi(request,env,action){
     return json(customerProfile(updated.customerAccounts[account.id]));
   }
   if(post&&action==='fare'){
-    const ride=customerRideInput(await decode(request));
+    const input=await decode(request);
+    const ride=customerRideInput(input);
     if(!['fixed','automatic'].includes(state.customerSettings?.fareMode)) return json({cents:null});
     const limited=await customerThrottle(db,'fare',account.id,60);
     if(limited) return limited;
-    return json({cents:customerFare(state,ride,await customerCityRoute(ride))});
+    const cents=customerFare(state,ride,await customerCityRoute(ride));
+    const loyalty=customerLoyalty(state,account.id);
+    const reward=customerReward(loyalty,input.rewardKey,cents);
+    const rewards=cents>0?(loyalty?.rewards.filter(item=>item.available)??[]):[];
+    return json({cents:reward?cents-reward.discountCents:cents,rewards,discountCents:reward?.discountCents??0});
   }
   if(post&&action==='rides'){
     const input=await decode(request);
@@ -216,10 +282,15 @@ async function customerApi(request,env,action){
       if(pending.length>=5) throw Error('Máte příliš mnoho otevřených objednávek.');
       const now=Date.now();
       const fare=customerFare(s,ride,route,now);
+      const reward=input.rewardKey?customerReward(customerLoyalty(s,current.id),input.rewardKey,fare):null;
+      if(input.rewardKey&&!reward) throw Error('Tuto odměnu teď nelze použít. Zvolte jinou nebo objednejte bez odměny.');
+      const loyalty=s.customerSettings?.loyalty;
       s.jobs.unshift({
         ...ride,id:++s.seq,customerId:current.id,name:current.firstName+' '+current.lastName,
         phone:current.phone,note:'Zákaznická objednávka',
-        created:now,status:'waiting',cents:fare??0,priceSet:fare!==null
+        created:now,status:'waiting',cents:(fare??0)-(reward?.discountCents??0),priceSet:fare!==null,
+        ...(loyalty?.enabled?{loyaltyPoints:loyalty.pointsPerRide}:{}),
+        ...(reward?{rewardCredits:reward.credits,rewardDiscountCents:reward.discountCents,rewardName:reward.name}:{})
       });
       record(s,'customer','create',s.seq);
     });

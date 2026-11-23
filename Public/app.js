@@ -41,6 +41,27 @@ const canSeePage=key=>({
 const roleLabel=value=>({owner:'Majitel firmy',dispatcher:'Dispečer',driver:'Řidič'})[value];
 const fleetHistory=()=>role!=='driver';
 const driverName=id=>drivers.find(d=>d.id===id)?.name??state?.removedDriverNames?.[id]??'';
+function addLoyaltyReward(reward={}){
+ const container=$('#loyalty-rewards');
+ if(container.children.length>=10) return;
+ const row=document.createElement('fieldset');
+ row.className='loyalty-reward';
+ row.innerHTML='<legend>Odměna</legend><label>Název<input name="rewardName" maxlength="60" required></label>'+
+  '<label>Hranice podle<select name="rewardUnit"><option value="points">Bodů</option><option value="rides">Dokončených jízd</option></select></label>'+
+  '<label>Počet<input name="rewardThreshold" type="number" min="1" max="10000" step="1" required></label>'+
+  '<label>Sleva (Kč)<input name="rewardDiscount" type="number" min="1" max="10000" step="1" required></label>'+
+  '<button type="button">Odebrat odměnu</button>';
+ row.querySelector('[name=rewardName]').value=reward.name??'';
+ row.querySelector('[name=rewardUnit]').value=reward.unit??'points';
+ row.querySelector('[name=rewardThreshold]').value=reward.threshold??'';
+ row.querySelector('[name=rewardDiscount]').value=reward.discount??'';
+ row.querySelector('button').addEventListener('click',()=>{
+   row.remove();
+   $('#add-loyalty-reward').disabled=false;
+ });
+ container.append(row);
+ $('#add-loyalty-reward').disabled=container.children.length>=10;
+}
 function renderCustomerSettings(){
  const panel=$('#customer-settings');
  panel.hidden=!isOwner(actor);
@@ -54,6 +75,11 @@ function renderCustomerSettings(){
  form.elements.fareMode.value=values.fareMode||'manual';
  form.elements.fixedFare.value=values.fixedFare??'';
  form.elements.fareMode.dispatchEvent(new Event('change'));
+ form.elements.loyaltyEnabled.checked=values.loyalty?.enabled===true;
+ form.elements.pointsPerRide.value=values.loyalty?.pointsPerRide??1;
+ $('#loyalty-rewards').replaceChildren();
+ $('#add-loyalty-reward').disabled=false;
+ for(const reward of values.loyalty?.rewards??[]) addLoyaltyReward(reward);
 }
 const statusText={waiting:'Čeká',assigned:'Čeká na přijetí',accepted:'K vyzvednutí',onboard:'Se zákazníkem',done:'Dokončeno'};
 let state=null, actor='dispatch', live=false, page='dispatch', queue='waiting', selected='', filter='', reportDate=day(), gps=null, gpsHeartbeat=null, gpsText='', lastGps=0, pending=false, incoming=null, noticeCount=0;
@@ -1624,13 +1650,20 @@ $('#customer-settings-form').elements.fareMode.addEventListener('change',event=>
  field.querySelector('input').required=fixed;
  $('#customer-auto-fare').hidden=event.target.value!=='automatic';
 });
+$('#add-loyalty-reward').addEventListener('click',()=>addLoyaltyReward());
 $('#customer-settings-form').addEventListener('submit',async event=>{
  event.preventDefault();
  const form=event.currentTarget;
- const button=form.querySelector('button');
+ const button=form.querySelector('button[type=submit]');
  button.disabled=true;
  try{
-   const result=await api('customer-settings',Object.fromEntries(new FormData(form)));
+   const {phone,email,hours,offers,fareMode,fixedFare,pointsPerRide}=Object.fromEntries(new FormData(form));
+   const rewards=Array.from($('#loyalty-rewards').children,row=>{
+     const value=name=>row.querySelector('[name='+name+']').value;
+     return {name:value('rewardName'),unit:value('rewardUnit'),threshold:value('rewardThreshold'),discount:value('rewardDiscount')};
+   });
+   const loyalty={enabled:form.elements.loyaltyEnabled.checked,pointsPerRide,rewards};
+   const result=await api('customer-settings',{phone,email,hours,offers,fareMode,fixedFare,loyalty});
    form.dataset.ready='';
    receive(result);
    renderCustomerSettings();

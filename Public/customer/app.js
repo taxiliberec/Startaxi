@@ -40,6 +40,7 @@ function mapMessage(text){
 }
 function resetRide(){
   rideForm.reset();
+  rideForm.elements.rewardKey.value='';
   rideForm.elements.timing.dispatchEvent(new Event('change'));
   for(const field of ['pickup','dropoff']){
     delete bookingPoints[field];
@@ -163,14 +164,27 @@ function setPoint(field,point,address){
 async function refreshFare(){
   fareLookup?.abort();
   const output=$('#fare-preview');
+  const selector=rideForm.elements.rewardKey;
+  const selected=selector.value;
   output.hidden=true;
-  if(!account||!panel.open||page!=='booking'||!bookingPoints.pickup||!bookingPoints.dropoff||!rideForm.checkValidity()) return;
+  if(!account||!panel.open||page!=='booking'||!bookingPoints.pickup||!bookingPoints.dropoff||!rideForm.checkValidity()){
+    selector.replaceChildren();
+    selector.disabled=true;
+    $('#booking-reward').hidden=true;
+    return;
+  }
   const lookup=fareLookup=new AbortController();
   requestId??=crypto.randomUUID();
   try{
-    const {cents}=await api('fare',{...Object.fromEntries(new FormData(rideForm)),requestId},lookup.signal);
-    if(lookup.signal.aborted||!panel.open||page!=='booking'||cents===null) return;
-    output.textContent='Odhad ceny '+currency.format(cents/100);
+    const {cents,rewards=[],discountCents=0}=await api('fare',{...Object.fromEntries(new FormData(rideForm)),requestId},lookup.signal);
+    if(lookup.signal.aborted||!panel.open||page!=='booking') return;
+    selector.replaceChildren(new Option('Bez odměny',''));
+    for(const reward of rewards) selector.append(new Option(reward.name+' · sleva '+currency.format(reward.discount),reward.key));
+    if(rewards.some(reward=>reward.key===selected)) selector.value=selected;
+    selector.disabled=!rewards.length;
+    $('#booking-reward').hidden=!rewards.length;
+    if(cents===null) return;
+    output.textContent='Odhad ceny '+currency.format(cents/100)+(discountCents?' po slevě '+currency.format(discountCents/100):'');
     output.hidden=false;
   }catch{/* Booking remains available if the price cannot be previewed. */}
 }
@@ -187,6 +201,7 @@ function renderRides(rides){
     if(reservation) card.append(reservation);
     card.append(element('strong',statuses[ride.status]||ride.status));
     if(ride.cents!==null) card.append(element('p',currency.format(ride.cents/100),'details'));
+    if(ride.rewardDiscountCents) card.append(element('p',ride.rewardName+' · sleva '+currency.format(ride.rewardDiscountCents/100),'details'));
     list.append(card);
   }
 }
@@ -203,13 +218,24 @@ async function refreshRides(){
 function renderInfo(info,target){
   target.replaceChildren();
   if(target.id==='offer-list'){
-    if(!info.offers?.length){
-      target.append(element('p','Momentálně nemáte žádné akce.'));
-      return;
+    if(info.loyalty){
+      const {points,rides,pointsPerRide,rewards}=info.loyalty;
+      target.append(element('h3','Věrnostní program'));
+      target.append(element('p','Body k využití: '+points+' · Jízdy k využití: '+rides));
+      target.append(element('p','Za každou dokončenou jízdu získáte '+pointsPerRide+' bodů.'));
+      const list=element('ul','');
+      for(const reward of rewards){
+        const threshold=reward.threshold+(reward.unit==='points'?' bodů':' jízd');
+        list.append(element('li',reward.name+' · '+currency.format(reward.discount)+' sleva · '+(reward.available?'Dostupná':threshold)));
+      }
+      target.append(list);
+      target.append(element('p','Při využití bodů se použité jízdy odečítají také z odměn za celé jízdy.'));
     }
-    const list=element('ul','');
-    for(const offer of info.offers) list.append(element('li',offer));
-    target.append(list);
+    if(info.offers?.length){
+      const list=element('ul','');
+      for(const offer of info.offers) list.append(element('li',offer));
+      target.append(list);
+    }else if(!info.loyalty) target.append(element('p','Momentálně nemáte žádné akce.'));
     return;
   }
   if(!info.phone&&!info.email&&!info.hours) target.append(element('p','Kontakty zatím nejsou vyplněné.'));
@@ -317,6 +343,7 @@ rideForm.elements.timing.addEventListener('change',()=>{
   void refreshFare();
 });
 rideForm.elements.scheduled.addEventListener('change',()=>refreshFare());
+rideForm.elements.rewardKey.addEventListener('change',()=>refreshFare());
 for(const field of ['pickup','dropoff']){
   const input=rideForm.elements[field];
   const list=$('#'+field+'-suggestions');

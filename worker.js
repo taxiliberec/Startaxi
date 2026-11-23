@@ -473,10 +473,10 @@ async function handleApi(request,env,path){
   if(path==='customer-settings'&&request.method==='POST'){
     if(!isOwner(actor)) throw new AccessDenied('Přístup zamítnut.');
     const input=await decode(request);
-    const settings=customerSettings(input);
     const {state,revision}=await updateState(env.DB,s=>{
       checkSession(s);
-      s.customerSettings=settings;
+      const {fareMode,fixedFare,loyalty}=s.customerSettings||{};
+      s.customerSettings=customerSettings({fareMode,fixedFare,loyalty,...input});
     });
     return json(view(state,actor,revision,users));
   }
