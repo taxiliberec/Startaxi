@@ -9,9 +9,9 @@
   <link rel="icon" href="./icon-192.png" type="image/png">
   <link rel="apple-touch-icon" href="./icon-192.png">
   <link rel="stylesheet" href="./leaflet.css">
-  <link rel="stylesheet" href="./style.css">
+  <link rel="stylesheet" href="./style.css?rev=4">
   <script defer src="./leaflet.js"></script>
-  <script type="module" src="./app.js?rev=3"></script>
+  <script type="module" src="./app.js?rev=4"></script>
 </head>
 <body>
   <main id="auth">
@@ -45,6 +45,11 @@
       <div class="brand map-brand"><img src="./icon-192.png" alt="" width="34" height="34"><b>Taxi Liberec</b></div>
       <button id="locate" class="floating" type="button" aria-label="Zobrazit moji polohu" title="Zobrazit moji polohu">◎</button>
     </header>
+    <div id="map-crosshair" aria-hidden="true" hidden></div>
+    <div id="map-pick-controls" class="map-actions" hidden>
+      <button id="confirm-map-point" class="primary" type="button">Potvrdit místo</button>
+      <button id="cancel-map-point" type="button">Zpět bez změny</button>
+    </div>
     <p id="map-message" role="status" hidden></p>
     <div class="map-actions">
       <button id="last-ride" type="button" hidden></button>
@@ -69,10 +74,11 @@
       <section id="booking" hidden>
         <form id="ride">
           <label>Adresa vyzvednutí<input name="pickup" autocomplete="off" aria-controls="pickup-suggestions" required maxlength="200"></label>
-          <div class="address-actions"><button type="button" id="use-location">Použít moji polohu</button><button type="button" id="pick-on-map">Vybrat na mapě</button></div>
+          <div class="address-actions"><button type="button" id="use-location">Použít moji polohu</button><button type="button" data-pick-on-map="pickup">Vybrat na mapě</button></div>
           <div class="suggestions" aria-live="polite" id="pickup-suggestions"></div>
           <label>Cílová adresa<input name="dropoff" autocomplete="off" aria-controls="dropoff-suggestions" required maxlength="200"></label>
           <div class="suggestions" aria-live="polite" id="dropoff-suggestions"></div>
+          <div class="address-actions"><button type="button" data-pick-on-map="dropoff">Vybrat cíl na mapě</button></div>
           <label>Vyzvednutí<select name="timing"><option value="now">Co nejdřív</option><option value="later">Na určitý čas</option></select></label>
           <label id="scheduled-label" hidden>Datum a čas (Česko)<input name="scheduled" type="datetime-local" disabled></label>
           <fieldset><legend>Platba po jízdě</legend><div class="payment"><label><input type="radio" name="payment" value="cash" checked> Hotově</label><label><input type="radio" name="payment" value="card"> Kartou u řidiče</label></div></fieldset>

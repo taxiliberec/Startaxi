@@ -17,6 +17,13 @@ const assets=Object.fromEntries(await Promise.all(Object.entries(files).map(asyn
 for(const [name,type] of [['leaflet.css','text/css'],['leaflet.js','text/javascript']]){
   assets['/customer/'+name]=[type+'; charset=utf-8',await readFile('node_modules/leaflet/dist/'+name,'utf8'),false];
 }
+for(const [name,path,type] of [
+  ['maplibre-gl.js','maplibre-gl/dist/maplibre-gl.js','text/javascript'],
+  ['maplibre-gl.css','maplibre-gl/dist/maplibre-gl.css','text/css'],
+  ['leaflet-maplibre-gl.js','@maplibre/maplibre-gl-leaflet/leaflet-maplibre-gl.js','text/javascript']
+]){
+  assets['/customer/'+name]=[type+'; charset=utf-8',await readFile('node_modules/'+path,'utf8'),false];
+}
 const model=assets['/model.js'][1].replace(/^export /gm,'');
 const customer=await readFile('customer-api.js','utf8');
 const worker=(await readFile('worker.js','utf8')).replace(/^import .*;\n/gm,'');

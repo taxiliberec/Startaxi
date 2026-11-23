@@ -5,10 +5,11 @@ const rideForm=$('#ride');
 const profileForm=$('#profile-form');
 const bookingPoints={};
 const titles={booking:'Objednat jízdu',history:'Moje historie jízd',offers:'Moje akce',contacts:'Kontakty',profile:'Nastavení účtu'};
-const statuses={waiting:'Čeká na potvrzení',confirmed:'Potvrzeno',assigned:'Přiděleno řidiči',accepted:'Řidič jede k vám',onboard:'Probíhá',done:'Dokončeno',cancelled:'Zrušeno'};
+const statuses={waiting:'Čeká na potvrzení',confirmed:'Potvrzeno',assigned:'Přiděleno řidiči',accepted:'Řidič jede k vám',onboard:'Probíhá',done:'Dokončeno',cancelled:'Zrušeno',rejected:'Odmítnuto dispečinkem'};
 const dateTime=new Intl.DateTimeFormat('cs-CZ',{dateStyle:'medium',timeStyle:'short',timeZone:'Europe/Prague'});
 const currency=new Intl.NumberFormat('cs-CZ',{style:'currency',currency:'CZK'});
-let account, map, positionDot, pickupPin, mapPicking=false, page, requestId, fareLookup;
+let account, map, positionDot, accuracyCircle, mapPicking, page, requestId, fareLookup, expectedCents, stopLocation;
+const bookingPins={};
 const liberec=[50.7695,15.0514];
 function element(tag,value,className){
   const node=document.createElement(tag);
@@ -25,7 +26,7 @@ async function api(path,body,signal){
   const data=await response.json();
   if(!response.ok){
     if(response.status===401&&account) signOut();
-    throw Object.assign(Error(data.error||'Spojení se Startaxi selhalo.'),{status:response.status});
+    throw Object.assign(Error(data.error||'Spojení se Startaxi selhalo.'),{status:response.status,code:data.code});
   }
   return data;
 }
@@ -46,8 +47,7 @@ function resetRide(){
     delete bookingPoints[field];
     $('#'+field+'-suggestions').replaceChildren();
   }
-  pickupPin?.remove();
-  pickupPin=null;
+  for(const field of Object.keys(bookingPins)) clearPin(field);
   requestId=null;
   void refreshFare();
 }
@@ -56,9 +56,12 @@ function signOut(){
   menu.close();
   panel.close();
   resetRide();
+  stopLocation?.();
   positionDot?.remove();
+  accuracyCircle?.remove();
   positionDot=null;
-  mapPicking=false;
+  accuracyCircle=null;
+  showMapPicker(null);
   $('#app').hidden=true;
   $('#auth').hidden=false;
   $('#auth-error').textContent='';
@@ -95,69 +98,134 @@ function startMap(){
   tiles.on('tileload',()=>{
     if($('#map-message').textContent==='Mapové podklady jsou dočasně nedostupné.') mapMessage('');
   });
-  map.on('click',async event=>{
-    if(!mapPicking||!account) return;
-    const current=account;
-    mapPicking=false;
-    const point={lat:event.latlng.lat,lng:event.latlng.lng};
-    $('#book').textContent='Objednat jízdu';
-    mapMessage('');
-    await openPage('booking');
-    if(account!==current) return;
-    setPoint('pickup',point,'Bod na mapě '+point.lat.toFixed(5)+', '+point.lng.toFixed(5));
-    const fallback=rideForm.elements.pickup.value;
-    try{
-      const {address}=await api('reverse-geocode',{point});
-      if(account===current&&bookingPoints.pickup===point&&rideForm.elements.pickup.value===fallback&&address){
-        setPoint('pickup',point,address);
-      }
-    }catch{}
+  map.on('click',event=>{
+    if(mapPicking) map.panTo(event.latlng,{animate:false});
   });
+  void loadVectorMap(tiles);
+}
+async function loadVectorMap(raster){
+  const loadScript=src=>new Promise((resolve,reject)=>{
+    const script=document.createElement('script');
+    script.src=src;
+    script.onload=resolve;
+    script.onerror=reject;
+    document.head.append(script);
+  });
+  // Keep the raster map visible until the vector style has rendered successfully.
+  let vector,timer;
+  const fallback=()=>{
+    clearTimeout(timer);
+    if(vector&&map.hasLayer(vector)) map.removeLayer(vector);
+    if(!map.hasLayer(raster)) raster.addTo(map);
+  };
+  try{
+    if(!window.WebGL2RenderingContext) return;
+    await loadScript('./maplibre-gl.js');
+    const stylesheet=document.createElement('link');
+    stylesheet.rel='stylesheet';
+    stylesheet.href='./maplibre-gl.css';
+    document.head.append(stylesheet);
+    await loadScript('./leaflet-maplibre-gl.js');
+    vector=window.L.maplibreGL({
+      style:'https://tiles.openfreemap.org/styles/liberty',
+      attribution:'<a href="https://openfreemap.org/">OpenFreeMap</a> · © <a href="https://openmaptiles.org/">OpenMapTiles</a> · © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+      interactive:false,
+      padding:0.1
+    }).addTo(map);
+    const gl=vector.getMaplibreMap();
+    timer=setTimeout(fallback,9000);
+    gl.once('load',()=>{
+      clearTimeout(timer);
+      if(map.hasLayer(vector)) map.removeLayer(raster);
+    });
+    gl.getCanvas().addEventListener('webglcontextlost',fallback,{once:true});
+  }catch{fallback();}
+}
+function showMapPicker(field){
+  mapPicking=field;
+  $('#map-crosshair').hidden=!field;
+  $('#map-pick-controls').hidden=!field;
+  $('.map-actions:not(#map-pick-controls)').hidden=Boolean(field);
+  if(field){
+    $('#confirm-map-point').textContent=field==='pickup'?'Potvrdit vyzvednutí':'Potvrdit cíl';
+    mapMessage('Posuňte mapu pod špendlík a potvrďte přesné místo.');
+  }else mapMessage('');
+}
+async function addressForPoint(field,point,label,profile=account){
+  const fallback=label+' '+point.lat.toFixed(5)+', '+point.lng.toFixed(5);
+  setPoint(field,point,fallback);
+  try{
+    const {address}=await api('reverse-geocode',{point});
+    if(account===profile&&bookingPoints[field]===point&&address) setPoint(field,point,address);
+  }catch{}
 }
 function locate(useForPickup=false){
   const report=useForPickup?message:mapMessage;
+  stopLocation?.();
   if(!navigator.geolocation){
     report('Tento prohlížeč polohu neposkytuje. Adresu můžete zadat ručně.');
     return;
   }
   const current=account;
   const value=rideForm.elements.pickup.value;
-  report('Hledám vaši polohu…');
-  navigator.geolocation.getCurrentPosition(async ({coords})=>{
+  let watch,timer,best,first=true;
+  const stop=()=>{
+    clearTimeout(timer);
+    if(watch!==undefined) navigator.geolocation.clearWatch(watch);
+    if(stopLocation===stop) stopLocation=null;
+  };
+  stopLocation=stop;
+  const finish=(errorCode)=>{
+    if(stopLocation!==stop) return;
+    stop();
     if(account!==current) return;
+    if(best){
+      const {point,accuracy}=best;
+      if(useForPickup&&panel.open&&page==='booking'&&rideForm.elements.pickup.value===value){
+        void addressForPoint('pickup',point,'Moje poloha',current);
+      }
+      report('Přesnost polohy přibližně '+Math.round(accuracy)+' m.'+
+        (accuracy>40?' Podle potřeby upřesněte místo na mapě.':''));
+    }else if(errorCode===1) report('Povolte přístup k poloze v prohlížeči nebo zadejte adresu ručně.');
+    else report('Polohu se nepodařilo získat. Zkuste to znovu nebo zadejte adresu ručně.');
+  };
+  report('Hledám přesnou polohu…');
+  timer=setTimeout(()=>finish(),14000);
+  watch=navigator.geolocation.watchPosition(({coords})=>{
+    if(account!==current||stopLocation!==stop) return;
+    const accuracy=coords.accuracy;
+    if(!Number.isFinite(accuracy)||accuracy<0||(best&&accuracy>=best.accuracy)) return;
     const point={lat:coords.latitude,lng:coords.longitude};
+    best={point,accuracy};
     if(map){
       const latlng=[point.lat,point.lng];
-      positionDot?.remove();
-      positionDot=window.L.circleMarker(latlng,{radius:9,color:'#fff',weight:3,fillColor:'#1765a5',fillOpacity:1}).bindTooltip('Moje poloha').addTo(map);
-      map.setView(latlng,16);
+      if(!positionDot){
+        positionDot=window.L.circleMarker(latlng,{radius:8,color:'#fff',weight:3,fillColor:'#1765a5',fillOpacity:1}).addTo(map);
+        accuracyCircle=window.L.circle(latlng,{radius:accuracy,color:'#1765a5',weight:1,fillOpacity:.12,interactive:false}).addTo(map);
+      }else{
+        positionDot.setLatLng(latlng);
+        accuracyCircle.setLatLng(latlng).setRadius(accuracy);
+      }
+      if(first||mapPicking) map.setView(latlng,Math.max(map.getZoom(),17),{animate:false});
     }
-    if(!useForPickup){
-      report(mapPicking?'Klepněte na místo vyzvednutí.':'');
-      return;
-    }
-    if(!panel.open||page!=='booking'||rideForm.elements.pickup.value!==value) return;
-    const fallback='Moje poloha '+point.lat.toFixed(5)+', '+point.lng.toFixed(5);
-    setPoint('pickup',point,fallback);
-    report('');
-    try{
-      const {address}=await api('reverse-geocode',{point});
-      if(account===current&&bookingPoints.pickup===point&&address) setPoint('pickup',point,address);
-    }catch{}
-  },({code})=>{
-    if(account!==current) return;
-    if(code===1) report('Povolte přístup k poloze v nastavení prohlížeče nebo zadejte adresu ručně.');
-    else report('Polohu se nepodařilo získat. Zkuste to znovu nebo zadejte adresu ručně.');
-  },{enableHighAccuracy:false,timeout:15000,maximumAge:30000});
+    first=false;
+    if(accuracy<=25) finish();
+  },({code})=>{if(code===1) finish(code);},{
+    enableHighAccuracy:true,timeout:12000,maximumAge:5000
+  });
+}
+function clearPin(field){
+  bookingPins[field]?.remove();
+  delete bookingPins[field];
 }
 function setPoint(field,point,address){
   bookingPoints[field]=point;
   rideForm.elements[field].value=address;
   $('#'+field+'-suggestions').replaceChildren();
-  if(field==='pickup'&&map){
-    pickupPin?.remove();
-    const icon=window.L.divIcon({className:'map-pin',iconSize:[19,19]});
-    pickupPin=window.L.marker([point.lat,point.lng],{icon,alt:'Místo vyzvednutí'}).addTo(map);
+  if(map){
+    clearPin(field);
+    const icon=window.L.divIcon({className:'map-pin map-pin--'+field,iconSize:[19,19]});
+    bookingPins[field]=window.L.marker([point.lat,point.lng],{icon,alt:field==='pickup'?'Vyzvednutí':'Cíl'}).addTo(map);
   }
   void refreshFare();
 }
@@ -167,26 +235,32 @@ async function refreshFare(){
   const selector=rideForm.elements.rewardKey;
   const selected=selector.value;
   output.hidden=true;
-  if(!account||!panel.open||page!=='booking'||!bookingPoints.pickup||!bookingPoints.dropoff||!rideForm.checkValidity()){
+  expectedCents=undefined;
+  if(!account||!panel.open||page!=='booking'||!rideForm.checkValidity()){
     selector.replaceChildren();
     selector.disabled=true;
     $('#booking-reward').hidden=true;
     return;
   }
   const lookup=fareLookup=new AbortController();
+  output.textContent='Počítám cenu…';
+  output.hidden=false;
   requestId??=crypto.randomUUID();
   try{
-    const {cents,rewards=[],discountCents=0}=await api('fare',{...Object.fromEntries(new FormData(rideForm)),requestId},lookup.signal);
+    const payload={...Object.fromEntries(new FormData(rideForm)),requestId,pickupPoint:bookingPoints.pickup,target:bookingPoints.dropoff};
+    const {cents,rewards=[],discountCents=0}=await api('fare',payload,lookup.signal);
     if(lookup.signal.aborted||!panel.open||page!=='booking') return;
     selector.replaceChildren(new Option('Bez odměny',''));
     for(const reward of rewards) selector.append(new Option(reward.name+' · sleva '+currency.format(reward.discount),reward.key));
     if(rewards.some(reward=>reward.key===selected)) selector.value=selected;
     selector.disabled=!rewards.length;
     $('#booking-reward').hidden=!rewards.length;
-    if(cents===null) return;
-    output.textContent='Odhad ceny '+currency.format(cents/100)+(discountCents?' po slevě '+currency.format(discountCents/100):'');
-    output.hidden=false;
-  }catch{/* Booking remains available if the price cannot be previewed. */}
+    expectedCents=cents;
+    output.textContent=cents===null?'Cenu sdělí dispečink.'
+      :'Cena před odesláním '+currency.format(cents/100)+(discountCents?' po slevě '+currency.format(discountCents/100):'');
+  }catch{
+    if(!lookup.signal.aborted) output.textContent='Cenu se nepodařilo ověřit. Zkuste to znovu.';
+  }
 }
 function renderRides(rides){
   const list=$('#rides');
@@ -209,7 +283,7 @@ async function refreshRides(){
   const current=account;
   const rides=await api('rides');
   if(account!==current) return;
-  const latest=rides.find(ride=>!['done','cancelled'].includes(ride.status));
+  const latest=rides.find(ride=>!['done','cancelled','rejected'].includes(ride.status));
   const lastRide=$('#last-ride');
   lastRide.hidden=!latest;
   if(latest) lastRide.textContent='Jízda č. '+latest.id+' · '+statuses[latest.status];
@@ -258,6 +332,7 @@ function renderInfo(info,target){
 async function openPage(name){
   if(!account) return;
   page=name;
+  if(mapPicking) showMapPicker(null);
   menu.close();
   for(const id of Object.keys(titles)) $('#'+id).hidden=id!==name;
   $('#panel-title').textContent=titles[name];
@@ -322,7 +397,7 @@ for(const button of document.querySelectorAll('[data-page]')){
 $('#locate').addEventListener('click',()=>locate());
 $('#use-location').addEventListener('click',()=>locate(true));
 $('#book').addEventListener('click',()=>{
-  mapPicking=false;
+  showMapPicker(null);
   $('#book').textContent='Objednat jízdu';
   if(map) mapMessage('');
   void openPage('booking');
@@ -347,12 +422,16 @@ rideForm.elements.rewardKey.addEventListener('change',()=>refreshFare());
 for(const field of ['pickup','dropoff']){
   const input=rideForm.elements[field];
   const list=$('#'+field+'-suggestions');
-  let timer, controller;
+  let timer, fareTimer, controller;
   input.addEventListener('input',()=>{
     delete bookingPoints[field];
-    void refreshFare();
+    fareLookup?.abort();
+    expectedCents=undefined;
+    $('#fare-preview').hidden=true;
+    clearTimeout(fareTimer);
+    fareTimer=setTimeout(refreshFare,800);
     list.replaceChildren();
-    if(field==='pickup'){pickupPin?.remove();pickupPin=null;}
+    clearPin(field);
     clearTimeout(timer);
     controller?.abort();
     const address=input.value.trim();
@@ -376,16 +455,42 @@ for(const field of ['pickup','dropoff']){
     },350);
   });
 }
-$('#pick-on-map').addEventListener('click',()=>{
-  if(!map){message('Mapa není dostupná. Adresu můžete zadat ručně.');return;}
-  mapPicking=true;
-  panel.close();
-  mapMessage('Klepněte na místo vyzvednutí.');
-  $('#book').textContent='Zpět k objednávce';
+for(const button of document.querySelectorAll('[data-pick-on-map]')){
+  button.addEventListener('click',()=>{
+    if(!map){message('Mapa není dostupná. Adresu můžete zadat ručně.');return;}
+    const field=button.dataset.pickOnMap;
+    const point=bookingPoints[field]??bookingPoints.pickup;
+    if(point) map.setView([point.lat,point.lng],Math.max(17,map.getZoom()),{animate:false});
+    else if(map.getZoom()<16) map.setZoom(16);
+    panel.close();
+    showMapPicker(field);
+  });
+}
+$('#cancel-map-point').addEventListener('click',()=>{
+  showMapPicker(null);
+  void openPage('booking');
+});
+$('#confirm-map-point').addEventListener('click',async()=>{
+  const field=mapPicking;
+  if(!field||!map) return;
+  const current=account;
+  const {lat,lng}=map.getCenter();
+  showMapPicker(null);
+  await openPage('booking');
+  if(account===current) void addressForPoint(field,{lat,lng},field==='pickup'?'Vyzvednutí na mapě':'Cíl na mapě');
 });
 bindForm(rideForm,async data=>{
   requestId??=crypto.randomUUID();
-  await api('rides',{...data,requestId,pickupPoint:bookingPoints.pickup,target:bookingPoints.dropoff});
+  if(expectedCents===undefined){
+    await refreshFare();
+    throw Error('Před odesláním zkontrolujte cenu.');
+  }
+  try{
+    await api('rides',{...data,requestId,expectedCents,pickupPoint:bookingPoints.pickup,target:bookingPoints.dropoff});
+  }catch(error){
+    if(error.code==='fare_changed') await refreshFare();
+    throw error;
+  }
   resetRide();
   await openPage('history');
   message('Objednávka byla odeslána dispečinku.',true);

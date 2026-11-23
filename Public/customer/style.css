@@ -74,3 +74,9 @@ legend { font-weight: 650; font-size: .875rem; }
 @media (max-width: 500px) {
   #panel { margin: auto .5rem max(.5rem, env(safe-area-inset-bottom)); }
 }
+
+#map-crosshair { position: absolute; z-index: 2; left: 50%; top: 50%; width: 32px; height: 32px; transform: translate(-50%, -100%); pointer-events: none; filter: drop-shadow(0 2px 2px #111e2c70); }
+#map-crosshair::before { content: ''; position: absolute; left: 4px; top: 0; width: 24px; height: 24px; border: 3px solid #111e2c; border-radius: 50%; background: var(--gold); box-sizing: border-box; }
+#map-crosshair::after { content: ''; position: absolute; left: 10px; bottom: 0; border: 6px solid transparent; border-top: 10px solid #111e2c; border-bottom: 0; }
+.map-pin--dropoff { background: #58b5ea; }
+#fare-preview { padding: .65rem .75rem; border-radius: 10px; background: #eef5fa; font-weight: 700; }

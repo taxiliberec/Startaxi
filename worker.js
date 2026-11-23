@@ -138,7 +138,7 @@ function view(state,actor,revision,users){
       ? can('history')&&(allHistory||job.driver===actor)
       : ['waiting','assigned','accepted','onboard'].includes(job.status)&&can('dispatchJobs')
         || job.status!=='cancelled'&&can('driverRide')&&job.driver===actor)
-      .map(({requestId,createdBy,customerId,...job})=>job),
+      .map(({requestId,createdBy,customerId,rewardCredits,loyaltyPoints,...job})=>({...job,customerOrder:Boolean(customerId)})),
     shiftOpen:can('gps')&&Boolean(state.openShifts?.[actor]??state.jobs.some(job=>job.driver===actor&&
       (['assigned','accepted','onboard'].includes(job.status)||job.status==='done'&&!job.shift))),
     positions,
@@ -676,12 +676,15 @@ async function handleApi(request,env,path){
       }
       if(Object.hasOwn(actionPermissions,action.type)&&!allows(permissionsFor(s,actor),actionPermissions[action.type])) throw new AccessDenied('Přístup zamítnut.');
       if(action.type==='gps'&&s.openShifts?.[actor]===false) throw Error('Nejdříve zahajte směnu.');
-      if(action.type==='confirmCustomerRide'){
-        if(!allows(permissionsFor(s,actor),'edit')) throw new AccessDenied('Přístup zamítnut.');
+      if(['confirmCustomerRide','rejectCustomerRide'].includes(action.type)){
+        const reject=action.type==='rejectCustomerRide';
+        if(!allows(permissionsFor(s,actor),reject?'cancel':'edit')) throw new AccessDenied('Přístup zamítnut.');
         const ride=s.jobs.find(job=>job.id===action.id&&job.customerId);
-        if(ride?.status!=='waiting') throw Error('Zakázku už nelze potvrdit.');
-        if(ride.confirmedAt) return false;
-        ride.confirmedAt=now;
+        if((reject&&ride?.rejectedAt)||(!reject&&ride?.confirmedAt&&ride.status==='waiting')) return false;
+        if(ride?.status!=='waiting'||ride.confirmedAt) throw Error('O objednávce už bylo rozhodnuto.');
+        if(reject) Object.assign(ride,{status:'cancelled',cancelled:now,rejectedAt:now});
+        else ride.confirmedAt=now;
+        record(s,actor,action.type,ride.id);
         return;
       }
       if(action.type==='assign'&&!activePosition(s,action.driver,Date.now())) throw Error('Řidič nesdílí aktuální polohu.');

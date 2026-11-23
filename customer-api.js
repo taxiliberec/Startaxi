@@ -17,7 +17,7 @@ function customerContact(input){
   return {phone,email};
 }
 function customerSettings(input){
-  const fareMode=input.fareMode??'manual';
+  const fareMode=input.fareMode??'automatic';
   if(!['manual','automatic','fixed'].includes(fareMode)) throw Error('Vyberte způsob účtování.');
   const fixedFare=Number(input.fixedFare);
   if(fareMode==='fixed'&&(!Number.isInteger(fixedFare)||fixedFare<1||fixedFare>10000)){
@@ -133,21 +133,32 @@ function customerRideInput(input){
 }
 async function customerCityRoute(ride){
   // Resolve pricing addresses on the server so request coordinates cannot change the fare.
-  const lookup=async address=>{
+  const lookup=async (address,point)=>{
+    if(point){
+      const city=await ruianQuery(12,{
+        where:'kod='+liberecCode,geometry:point.lng+','+point.lat,geometryType:'esriGeometryPoint',
+        inSR:'4326',spatialRel:'esriSpatialRelIntersects',outFields:'kod',returnGeometry:'false'
+      });
+      return city.some(feature=>feature.attributes?.kod===liberecCode)?point:null;
+    }
     const matches=await liberecAddresses(address);
-    return matches.find(match=>foldStreet(match.address)===foldStreet(address))?.point;
+    const street=foldStreet(address).split(',')[0];
+    const exact=matches.filter(match=>foldStreet(match.address).split(',')[0]===street);
+    return exact.length===1?exact[0].point:null;
   };
   try{
-    const [pickup,target]=await Promise.all([lookup(ride.pickup),lookup(ride.dropoff)]);
+    const [pickup,target]=await Promise.all([lookup(ride.pickup,ride.pickupPoint),lookup(ride.dropoff,ride.target)]);
     if(pickup&&target) return {pickup,target};
   }catch{/* When an address cannot be verified, the dispatcher sets the fare. */}
   return null;
 }
+const customerFareMode=state=>state.customerSettings?.fareMode??'automatic';
 function customerFare(state,ride,route,now=Date.now()){
-  const settings=state.customerSettings;
-  if(!route||!settings) return null;
-  if(settings.fareMode==='fixed'&&Number.isInteger(settings.fixedFare)) return settings.fixedFare*100;
-  if(settings.fareMode!=='automatic') return null;
+  if(!route) return null;
+  const mode=customerFareMode(state);
+  const fixedFare=state.customerSettings?.fixedFare;
+  if(mode==='fixed'&&Number.isInteger(fixedFare)) return fixedFare*100;
+  if(mode!=='automatic') return null;
 
   const distance=meters(route.pickup,route.target);
   const base=distance<=2000?90:distance<=5000?120:150;
@@ -160,9 +171,9 @@ function customerFare(state,ride,route,now=Date.now()){
   const adjustment=waiting===0&&available>0?-30:Math.min(150,Math.max(0,waiting-available)*30);
   return (base+adjustment)*100;
 }
-const customerRide=({id,pickup,dropoff,scheduled,payment,created,done,status,confirmedAt,cents,priceSet,rewardDiscountCents,rewardName})=>({
+const customerRide=({id,pickup,dropoff,scheduled,payment,created,done,status,confirmedAt,rejectedAt,cents,priceSet,rewardDiscountCents,rewardName})=>({
   id,pickup,dropoff,scheduled,payment,created,done,
-  status:status==='waiting'&&confirmedAt?'confirmed':status,cents:status==='done'||priceSet?cents:null,
+  status:rejectedAt?'rejected':status==='waiting'&&confirmedAt?'confirmed':status,cents:status==='done'||priceSet?cents:null,
   ...(rewardDiscountCents?{rewardDiscountCents,rewardName}:{})
 });
 async function customerApi(request,env,action){
@@ -259,7 +270,7 @@ async function customerApi(request,env,action){
   if(post&&action==='fare'){
     const input=await decode(request);
     const ride=customerRideInput(input);
-    if(!['fixed','automatic'].includes(state.customerSettings?.fareMode)) return json({cents:null});
+    if(customerFareMode(state)==='manual') return json({cents:null});
     const limited=await customerThrottle(db,'fare',account.id,60);
     if(limited) return limited;
     const cents=customerFare(state,ride,await customerCityRoute(ride));
@@ -273,9 +284,11 @@ async function customerApi(request,env,action){
     const previous=state.jobs.find(job=>job.customerId===account.id&&job.requestId===input.requestId);
     if(previous) return json(customerRide(previous),201);
     const ride=customerRideInput(input);
-    const route=['fixed','automatic'].includes(state.customerSettings?.fareMode)?await customerCityRoute(ride):null;
+    const route=customerFareMode(state)==='manual'?null:await customerCityRoute(ride);
 
+    let priceChanged;
     const {state:updated}=await updateState(db,s=>{
+      priceChanged=false;
       const current=check(s);
       if(s.jobs.some(job=>job.customerId===current.id&&job.requestId===input.requestId)) return false;
       const pending=s.jobs.filter(job=>job.customerId===current.id&&['waiting','assigned','accepted','onboard'].includes(job.status));
@@ -284,16 +297,23 @@ async function customerApi(request,env,action){
       const fare=customerFare(s,ride,route,now);
       const reward=input.rewardKey?customerReward(customerLoyalty(s,current.id),input.rewardKey,fare):null;
       if(input.rewardKey&&!reward) throw Error('Tuto odměnu teď nelze použít. Zvolte jinou nebo objednejte bez odměny.');
+      const total=fare===null?null:fare-(reward?.discountCents??0);
+      if(total!==(input.expectedCents??null)){
+        priceChanged=true;
+        return false;
+      }
       const loyalty=s.customerSettings?.loyalty;
       s.jobs.unshift({
-        ...ride,id:++s.seq,customerId:current.id,name:current.firstName+' '+current.lastName,
+        ...ride,pickupPoint:route?.pickup??ride.pickupPoint,target:route?.target??ride.target,
+        id:++s.seq,customerId:current.id,name:current.firstName+' '+current.lastName,
         phone:current.phone,note:'Zákaznická objednávka',
-        created:now,status:'waiting',cents:(fare??0)-(reward?.discountCents??0),priceSet:fare!==null,
+        created:now,status:'waiting',cents:total??0,priceSet:fare!==null,
         ...(loyalty?.enabled?{loyaltyPoints:loyalty.pointsPerRide}:{}),
         ...(reward?{rewardCredits:reward.credits,rewardDiscountCents:reward.discountCents,rewardName:reward.name}:{})
       });
       record(s,'customer','create',s.seq);
     });
+    if(priceChanged) return json({error:'Cena se změnila. Před odesláním zkontrolujte novou částku.',code:'fare_changed'},409);
     return json(customerRide(updated.jobs.find(job=>job.customerId===account.id&&job.requestId===input.requestId)),201);
   }
   return json({error:'Stránka neexistuje.'},404);

@@ -72,7 +72,7 @@ function renderCustomerSettings(){
  form.dataset.ready=actor;
  for(const name of ['phone','email','hours']) form.elements[name].value=values[name]||'';
  form.elements.offers.value=(values.offers||[]).join('\n');
- form.elements.fareMode.value=values.fareMode||'manual';
+ form.elements.fareMode.value=values.fareMode??'automatic';
  form.elements.fixedFare.value=values.fixedFare??'';
  form.elements.fareMode.dispatchEvent(new Event('change'));
  form.elements.loyaltyEnabled.checked=values.loyalty?.enabled===true;
@@ -454,7 +454,7 @@ function refreshDriverStats(){
  table.innerHTML=driverStatsRows();
 }
 function renderOwnerHistory(open){
- const labels={userRenamed:'Upraveno jméno uživatele',userRemoved:'Odstraněn uživatel',vehicleRemoved:'Odstraněno vozidlo',employeeCreated:'Vytvořen účet zaměstnance',employeePermissions:'Změněna oprávnění zaměstnance',ownerCreated:'Vytvořen účet majitele',driver:'Vytvořen účet řidiče',create:'Vytvořena zakázka',createOwn:'Vytvořena vlastní zakázka',cancelJob:'Zakázka zrušena',editPickupTime:'Upraven čas vyzvednutí',editJob:'Upraveny údaje zakázky',assign:'Přiřazena zakázka',accept:'Přijata zakázka',pickup:'Vyzvednut zákazník',complete:'Dokončena jízda',close:'Uzavřena směna'};
+ const labels={userRenamed:'Upraveno jméno uživatele',userRemoved:'Odstraněn uživatel',vehicleRemoved:'Odstraněno vozidlo',employeeCreated:'Vytvořen účet zaměstnance',employeePermissions:'Změněna oprávnění zaměstnance',ownerCreated:'Vytvořen účet majitele',driver:'Vytvořen účet řidiče',create:'Vytvořena zakázka',createOwn:'Vytvořena vlastní zakázka',cancelJob:'Zakázka zrušena',confirmCustomerRide:'Zákaznická objednávka potvrzena',rejectCustomerRide:'Zákaznická objednávka odmítnuta',editPickupTime:'Upraven čas vyzvednutí',editJob:'Upraveny údaje zakázky',assign:'Přiřazena zakázka',accept:'Přijata zakázka',pickup:'Vyzvednut zákazník',complete:'Dokončena jízda',close:'Uzavřena směna'};
  const date=ownerFilters.activityDate;
  const entries=(state.activity??[]).filter(entry=>Number.isFinite(entry.time)&&day(entry.time)===date);
  const rows=entries.map(entry=>{
@@ -513,7 +513,11 @@ function renderQueue(){
    (j.phone?'<span>Tel. '+esc(j.phone)+'</span>':'')+
    (j.confirmedAt?'<span>Potvrzeno zákazníkovi</span>':'')+
    '</div><strong>'+(j.payment&&!j.priceSet?'Čeká na cenu':cash(j.cents))+'</strong></div></button>'+
-   (j.status==='waiting'&&j.payment&&!j.confirmedAt&&can('edit')?'<div class="assignment-status"><button type="button" data-confirm-customer="'+j.id+'">Potvrdit zákazníkovi</button></div>':'')+
+   (j.status==='waiting'&&j.customerOrder&&!j.confirmedAt&&(can('edit')||can('cancel'))
+     ?'<div class="assignment-status">'+
+       (can('edit')?'<button type="button" data-customer-decision="confirmCustomerRide" data-id="'+j.id+'">Potvrdit objednávku</button>':'')+
+       (can('cancel')?'<button type="button" data-customer-decision="rejectCustomerRide" data-id="'+j.id+'">Odmítnout objednávku</button>':'')+
+       '</div>':'')+
    (j.status==='assigned'?'<div class="assignment-status"><span data-assignment-countdown="'+j.id+'"></span>'+
      (can('assign')?'<button type="button" data-requeue="'+j.id+'" hidden>Vrátit k přeřazení</button>':'')+'</div>':'')+'</div>').join('')||'<p class="empty">Žádné zakázky</p>';
  updateAssignmentTimers();
@@ -1672,10 +1676,14 @@ $('#customer-settings-form').addEventListener('submit',async event=>{
  finally{button.disabled=false;}
 });
 $('#queue').addEventListener('click',async event=>{
- const button=event.target.closest('[data-confirm-customer]');
+ const button=event.target.closest('[data-customer-decision]');
  if(!button) return;
- button.disabled=true;
+ const type=button.dataset.customerDecision;
+ const reject=type==='rejectCustomerRide';
+ if(reject&&!window.confirm('Odmítnout tuto zákaznickou objednávku?')) return;
+ const buttons=button.parentElement.querySelectorAll('button');
+ for(const action of buttons) action.disabled=true;
  try{
-   if(await perform({type:'confirmCustomerRide',id:Number(button.dataset.confirmCustomer)})) notify('Objednávka byla potvrzena.');
- }finally{button.disabled=false;}
+   if(await perform({type,id:Number(button.dataset.id)})) notify(reject?'Objednávka byla odmítnuta.':'Objednávka byla potvrzena.');
+ }finally{for(const action of buttons) action.disabled=false;}
 });
