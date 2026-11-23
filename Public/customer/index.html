@@ -6,17 +6,17 @@
   <meta name="theme-color" content="#111e2c">
   <title>Taxi Liberec | Objednat taxi v Liberci</title>
   <link rel="manifest" href="./manifest.webmanifest">
-  <link rel="icon" href="/taximetr.svg" type="image/svg+xml">
-  <link rel="apple-touch-icon" href="/taximetr-192.png">
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIINfQ3ynhpgHYQEpGKO1MydlZLhykYfjhk=" crossorigin="">
+  <link rel="icon" href="./icon-192.png" type="image/png">
+  <link rel="apple-touch-icon" href="./icon-192.png">
+  <link rel="stylesheet" href="./leaflet.css">
   <link rel="stylesheet" href="./style.css">
-  <script defer src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-  <script type="module" src="./app.js"></script>
+  <script defer src="./leaflet.js"></script>
+  <script type="module" src="./app.js?rev=2"></script>
 </head>
 <body>
   <main id="auth">
     <section class="auth-card">
-      <div class="brand"><img src="/taximetr-192.png" alt="" width="46" height="46"><div><b>Taxi Liberec</b><small>Taxi Liberec</small></div></div>
+      <div class="brand"><img src="./icon-192.png" alt="" width="46" height="46"><div><b>Taxi Liberec</b><small>Taxi Liberec</small></div></div>
       <h1 id="auth-title">Přihlášení</h1>
       <form id="login">
         <label>Přihlašovací jméno<input name="username" required autocomplete="username" maxlength="40" autocapitalize="none"></label>
@@ -42,8 +42,8 @@
     <div id="map" aria-label="Mapa Liberce a vaše poloha"></div>
     <header class="map-header">
       <button id="open-menu" class="floating" type="button" aria-label="Otevřít menu">☰</button>
-      <div class="brand map-brand"><img src="/taximetr-192.png" alt="" width="34" height="34"><b>Taxi Liberec</b></div>
-      <button id="locate" class="floating" type="button" aria-label="Zobrazit moji polohu">◎</button>
+      <div class="brand map-brand"><img src="./icon-192.png" alt="" width="34" height="34"><b>Taxi Liberec</b></div>
+      <button id="locate" class="floating" type="button" aria-label="Zobrazit moji polohu" title="Zobrazit moji polohu">◎</button>
     </header>
     <p id="map-message" role="status" hidden></p>
     <div class="map-actions">
@@ -68,15 +68,15 @@
       <p id="panel-message" role="status"></p>
       <section id="booking" hidden>
         <form id="ride">
-          <label>Adresa vyzvednutí<input name="pickup" required maxlength="200"></label>
-          <div class="address-actions"><button type="button" data-search="pickup">Vyhledat adresu</button><button type="button" id="pick-on-map">Vybrat na mapě</button></div>
-          <div class="suggestions" id="pickup-suggestions"></div>
-          <label>Cílová adresa<input name="dropoff" required maxlength="200"></label>
-          <div class="address-actions"><button type="button" data-search="dropoff">Vyhledat adresu</button></div>
-          <div class="suggestions" id="dropoff-suggestions"></div>
+          <label>Adresa vyzvednutí<input name="pickup" autocomplete="off" aria-controls="pickup-suggestions" required maxlength="200"></label>
+          <div class="address-actions"><button type="button" id="use-location">Použít moji polohu</button><button type="button" id="pick-on-map">Vybrat na mapě</button></div>
+          <div class="suggestions" aria-live="polite" id="pickup-suggestions"></div>
+          <label>Cílová adresa<input name="dropoff" autocomplete="off" aria-controls="dropoff-suggestions" required maxlength="200"></label>
+          <div class="suggestions" aria-live="polite" id="dropoff-suggestions"></div>
           <label>Vyzvednutí<select name="timing"><option value="now">Co nejdřív</option><option value="later">Na určitý čas</option></select></label>
           <label id="scheduled-label" hidden>Datum a čas (Česko)<input name="scheduled" type="datetime-local" disabled></label>
           <fieldset><legend>Platba po jízdě</legend><div class="payment"><label><input type="radio" name="payment" value="cash" checked> Hotově</label><label><input type="radio" name="payment" value="card"> Kartou u řidiče</label></div></fieldset>
+          <p id="fare-preview" role="status" hidden></p>
           <button class="primary" type="submit">Odeslat objednávku</button>
         </form>
       </section>

@@ -51,6 +51,9 @@ function renderCustomerSettings(){
  form.dataset.ready=actor;
  for(const name of ['phone','email','hours']) form.elements[name].value=values[name]||'';
  form.elements.offers.value=(values.offers||[]).join('\n');
+ form.elements.fareMode.value=values.fareMode||'manual';
+ form.elements.fixedFare.value=values.fixedFare??'';
+ form.elements.fareMode.dispatchEvent(new Event('change'));
 }
 const statusText={waiting:'Čeká',assigned:'Čeká na přijetí',accepted:'K vyzvednutí',onboard:'Se zákazníkem',done:'Dokončeno'};
 let state=null, actor='dispatch', live=false, page='dispatch', queue='waiting', selected='', filter='', reportDate=day(), gps=null, gpsHeartbeat=null, gpsText='', lastGps=0, pending=false, incoming=null, noticeCount=0;
@@ -1613,6 +1616,14 @@ document.addEventListener('visibilitychange',()=>{
 window.addEventListener('offline',showSync);
 window.addEventListener('online',()=>{showSync();if(live) void poll(); else void restoreSession();});
 
+$('#customer-settings-form').elements.fareMode.addEventListener('change',event=>{
+ const fixed=event.target.value==='fixed';
+ const field=$('#customer-fixed-fare');
+ field.hidden=!fixed;
+ field.querySelector('input').disabled=!fixed;
+ field.querySelector('input').required=fixed;
+ $('#customer-auto-fare').hidden=event.target.value!=='automatic';
+});
 $('#customer-settings-form').addEventListener('submit',async event=>{
  event.preventDefault();
  const form=event.currentTarget;

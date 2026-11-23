@@ -8,18 +8,19 @@ const titles={booking:'Objednat jízdu',history:'Moje historie jízd',offers:'Mo
 const statuses={waiting:'Čeká na potvrzení',confirmed:'Potvrzeno',assigned:'Přiděleno řidiči',accepted:'Řidič jede k vám',onboard:'Probíhá',done:'Dokončeno',cancelled:'Zrušeno'};
 const dateTime=new Intl.DateTimeFormat('cs-CZ',{dateStyle:'medium',timeStyle:'short',timeZone:'Europe/Prague'});
 const currency=new Intl.NumberFormat('cs-CZ',{style:'currency',currency:'CZK'});
-let account, map, positionDot, pickupPin, mapPicking=false, page, requestId;
+let account, map, positionDot, pickupPin, mapPicking=false, page, requestId, fareLookup;
+const liberec=[50.7695,15.0514];
 function element(tag,value,className){
   const node=document.createElement(tag);
   node.textContent=value;
   if(className) node.className=className;
   return node;
 }
-async function api(path,body){
+async function api(path,body,signal){
   const response=await fetch('/api/customer/'+path,{
     method:body?'POST':'GET',cache:'no-store',
     headers:body?{'Content-Type':'application/json'}:{},
-    body:body&&JSON.stringify(body),signal:AbortSignal.timeout(15000)
+    body:body&&JSON.stringify(body),signal:signal?(AbortSignal.any?.([signal,AbortSignal.timeout(15000)])??signal):AbortSignal.timeout(15000)
   });
   const data=await response.json();
   if(!response.ok){
@@ -47,6 +48,7 @@ function resetRide(){
   pickupPin?.remove();
   pickupPin=null;
   requestId=null;
+  void refreshFare();
 }
 function signOut(){
   account=null;
@@ -69,8 +71,8 @@ function signIn(profile){
   $('#auth').hidden=true;
   $('#app').hidden=false;
   startMap();
-  map?.setView([50.7695,15.0514],14);
-  map?.invalidateSize();
+  map?.setView(liberec,14);
+  requestAnimationFrame(()=>map?.invalidateSize());
   void refreshRides().catch(()=>{});
   navigator.permissions?.query({name:'geolocation'}).then(permission=>{
     if(permission.state==='granted'&&account===profile) locate();
@@ -81,11 +83,17 @@ function startMap(){
     if(!map) mapMessage('Mapu se nepodařilo načíst. Adresy můžete zadat ručně.');
     return;
   }
-  map=window.L.map('map',{zoomControl:false}).setView([50.7695,15.0514],14);
+  map=window.L.map('map',{zoomControl:false}).setView(liberec,14);
   window.L.control.zoom({position:'bottomright'}).addTo(map);
-  window.L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{
+  const tiles=window.L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{
     maxZoom:19,attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
   }).addTo(map);
+  tiles.on('tileerror',()=>{
+    if(!$('#map-message').textContent) mapMessage('Mapové podklady jsou dočasně nedostupné.');
+  });
+  tiles.on('tileload',()=>{
+    if($('#map-message').textContent==='Mapové podklady jsou dočasně nedostupné.') mapMessage('');
+  });
   map.on('click',async event=>{
     if(!mapPicking||!account) return;
     const current=account;
@@ -100,28 +108,46 @@ function startMap(){
     try{
       const {address}=await api('reverse-geocode',{point});
       if(account===current&&bookingPoints.pickup===point&&rideForm.elements.pickup.value===fallback&&address){
-        rideForm.elements.pickup.value=address;
+        setPoint('pickup',point,address);
       }
     }catch{}
   });
 }
-function locate(){
-  if(!map||!navigator.geolocation){
-    mapMessage('Poloha není dostupná. Adresu můžete zadat ručně.');
+function locate(useForPickup=false){
+  const report=useForPickup?message:mapMessage;
+  if(!navigator.geolocation){
+    report('Tento prohlížeč polohu neposkytuje. Adresu můžete zadat ručně.');
     return;
   }
   const current=account;
-  mapMessage('Hledám vaši polohu…');
-  navigator.geolocation.getCurrentPosition(({coords})=>{
+  const value=rideForm.elements.pickup.value;
+  report('Hledám vaši polohu…');
+  navigator.geolocation.getCurrentPosition(async ({coords})=>{
     if(account!==current) return;
-    const latlng=[coords.latitude,coords.longitude];
-    positionDot?.remove();
-    positionDot=window.L.circleMarker(latlng,{radius:9,color:'#fff',weight:3,fillColor:'#1765a5',fillOpacity:1}).bindTooltip('Moje poloha').addTo(map);
-    map.flyTo(latlng,16);
-    mapMessage(mapPicking?'Klepněte na místo vyzvednutí.':'');
-  },()=>{
-    if(account===current) mapMessage('Polohu se nepodařilo získat. Adresu můžete zadat ručně.');
-  },{enableHighAccuracy:true,timeout:10000,maximumAge:30000});
+    const point={lat:coords.latitude,lng:coords.longitude};
+    if(map){
+      const latlng=[point.lat,point.lng];
+      positionDot?.remove();
+      positionDot=window.L.circleMarker(latlng,{radius:9,color:'#fff',weight:3,fillColor:'#1765a5',fillOpacity:1}).bindTooltip('Moje poloha').addTo(map);
+      map.setView(latlng,16);
+    }
+    if(!useForPickup){
+      report(mapPicking?'Klepněte na místo vyzvednutí.':'');
+      return;
+    }
+    if(!panel.open||page!=='booking'||rideForm.elements.pickup.value!==value) return;
+    const fallback='Moje poloha '+point.lat.toFixed(5)+', '+point.lng.toFixed(5);
+    setPoint('pickup',point,fallback);
+    report('');
+    try{
+      const {address}=await api('reverse-geocode',{point});
+      if(account===current&&bookingPoints.pickup===point&&address) setPoint('pickup',point,address);
+    }catch{}
+  },({code})=>{
+    if(account!==current) return;
+    if(code===1) report('Povolte přístup k poloze v nastavení prohlížeče nebo zadejte adresu ručně.');
+    else report('Polohu se nepodařilo získat. Zkuste to znovu nebo zadejte adresu ručně.');
+  },{enableHighAccuracy:false,timeout:15000,maximumAge:30000});
 }
 function setPoint(field,point,address){
   bookingPoints[field]=point;
@@ -132,6 +158,21 @@ function setPoint(field,point,address){
     const icon=window.L.divIcon({className:'map-pin',iconSize:[19,19]});
     pickupPin=window.L.marker([point.lat,point.lng],{icon,alt:'Místo vyzvednutí'}).addTo(map);
   }
+  void refreshFare();
+}
+async function refreshFare(){
+  fareLookup?.abort();
+  const output=$('#fare-preview');
+  output.hidden=true;
+  if(!account||!panel.open||page!=='booking'||!bookingPoints.pickup||!bookingPoints.dropoff||!rideForm.checkValidity()) return;
+  const lookup=fareLookup=new AbortController();
+  requestId??=crypto.randomUUID();
+  try{
+    const {cents}=await api('fare',{...Object.fromEntries(new FormData(rideForm)),requestId},lookup.signal);
+    if(lookup.signal.aborted||!panel.open||page!=='booking'||cents===null) return;
+    output.textContent='Odhad ceny '+currency.format(cents/100);
+    output.hidden=false;
+  }catch{/* Booking remains available if the price cannot be previewed. */}
 }
 function renderRides(rides){
   const list=$('#rides');
@@ -196,6 +237,7 @@ async function openPage(name){
   $('#panel-title').textContent=titles[name];
   message();
   if(!panel.open) panel.showModal();
+  if(name==='booking') void refreshFare();
   try{
     if(name==='profile'){
       profileForm.reset();
@@ -251,7 +293,8 @@ for(const button of document.querySelectorAll('[data-close]')){
 for(const button of document.querySelectorAll('[data-page]')){
   button.addEventListener('click',()=>openPage(button.dataset.page));
 }
-$('#locate').addEventListener('click',locate);
+$('#locate').addEventListener('click',()=>locate());
+$('#use-location').addEventListener('click',()=>locate(true));
 $('#book').addEventListener('click',()=>{
   mapPicking=false;
   $('#book').textContent='Objednat jízdu';
@@ -271,34 +314,39 @@ rideForm.elements.timing.addEventListener('change',()=>{
   $('#scheduled-label').hidden=!later;
   rideForm.elements.scheduled.disabled=!later;
   rideForm.elements.scheduled.required=later;
+  void refreshFare();
 });
+rideForm.elements.scheduled.addEventListener('change',()=>refreshFare());
 for(const field of ['pickup','dropoff']){
   const input=rideForm.elements[field];
   const list=$('#'+field+'-suggestions');
-  const button=$('[data-search='+field+']');
+  let timer, controller;
   input.addEventListener('input',()=>{
     delete bookingPoints[field];
+    void refreshFare();
     list.replaceChildren();
     if(field==='pickup'){pickupPin?.remove();pickupPin=null;}
-  });
-  button.addEventListener('click',async()=>{
+    clearTimeout(timer);
+    controller?.abort();
     const address=input.value.trim();
-    if(address.length<3){message('Zadejte alespoň tři znaky adresy.');return;}
-    button.disabled=true;
-    message();
-    try{
-      const result=await api('geocode',{address});
-      if(input.value.trim()!==address||page!=='booking') return;
-      list.replaceChildren();
-      for(const suggestion of result.suggestions){
-        const option=element('button',suggestion.address);
-        option.type='button';
-        option.addEventListener('click',()=>{setPoint(field,suggestion.point,suggestion.address);input.focus();});
-        list.append(option);
+    if(address.length<3) return;
+    timer=setTimeout(async()=>{
+      const lookup=controller=new AbortController();
+      const isCurrent=()=>!lookup.signal.aborted&&input.value.trim()===address&&!bookingPoints[field]&&page==='booking'&&panel.open;
+      try{
+        const {suggestions}=await api('geocode',{address},lookup.signal);
+        if(!isCurrent()) return;
+        for(const suggestion of suggestions.slice(0,8)){
+          const option=element('button',suggestion.address);
+          option.type='button';
+          option.addEventListener('click',()=>{setPoint(field,suggestion.point,suggestion.address);input.focus();});
+          list.append(option);
+        }
+        if(!suggestions.length) list.append(element('p','Bez shody. Můžete doplnit číslo domu nebo obec.'));
+      }catch(error){
+        if(isCurrent()) list.append(element('p',error.message));
       }
-      if(!result.suggestions.length) list.append(element('p','Adresa nenalezena. Můžete ji odeslat ručně.'));
-    }catch(error){message(error.message);}
-    finally{button.disabled=false;}
+    },350);
   });
 }
 $('#pick-on-map').addEventListener('click',()=>{

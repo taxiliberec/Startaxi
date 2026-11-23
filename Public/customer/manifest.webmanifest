@@ -9,7 +9,7 @@
   "background_color": "#111e2c",
   "theme_color": "#111e2c",
   "icons": [
-    {"src":"/taximetr-192.png","sizes":"192x192","type":"image/png"},
-    {"src":"/taximetr-512.png","sizes":"512x512","type":"image/png"}
+    {"src":"/customer/icon-192.png","sizes":"192x192","type":"image/png"},
+    {"src":"/customer/icon-512.png","sizes":"512x512","type":"image/png"}
   ]
 }
