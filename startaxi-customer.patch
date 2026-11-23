@@ -1,0 +1,1177 @@
+diff --git a/Public/app.js b/Public/app.js
+index 096d110..bcf8255 100644
+--- a/Public/app.js
++++ b/Public/app.js
+@@ -41,6 +41,17 @@ const canSeePage=key=>({
+ const roleLabel=value=>({owner:'Majitel firmy',dispatcher:'Dispečer',driver:'Řidič'})[value];
+ const fleetHistory=()=>role!=='driver';
+ const driverName=id=>drivers.find(d=>d.id===id)?.name??state?.removedDriverNames?.[id]??'';
++function renderCustomerSettings(){
++ const panel=$('#customer-settings');
++ panel.hidden=!isOwner(actor);
++ if(panel.hidden) return;
++ const form=$('#customer-settings-form');
++ const values=state.customerSettings||{};
++ if(form.dataset.ready===actor) return;
++ form.dataset.ready=actor;
++ for(const name of ['phone','email','hours']) form.elements[name].value=values[name]||'';
++ form.elements.offers.value=(values.offers||[]).join('\n');
++}
+ const statusText={waiting:'Čeká',assigned:'Čeká na přijetí',accepted:'K vyzvednutí',onboard:'Se zákazníkem',done:'Dokončeno'};
+ let state=null, actor='dispatch', live=false, page='dispatch', queue='waiting', selected='', filter='', reportDate=day(), gps=null, gpsHeartbeat=null, gpsText='', lastGps=0, pending=false, incoming=null, noticeCount=0;
+ function notify(msg){
+@@ -203,6 +214,8 @@ for(const id of draftForms){
+ function lockApp(){
+  sessionGeneration++; ridePushEnabled=false; revision=-1; drivers=[]; vehicles=[]; profile=null; state=null; live=false; stopGps();
+  for(const form of [$('#booking'),$('#own-ride'),$('#profile-form'),$('#owner-form'),$('#employee-form')]) form.reset();
++ $('#customer-settings-form').reset();
++ delete $('#customer-settings-form').dataset.ready;
+  for(const dialog of document.querySelectorAll('dialog[open]')) dialog.close();
+  $('#activity').replaceChildren();
+  fillDefaultPermissions();
+@@ -251,7 +264,7 @@ function render(){
+  $('#driver').hidden=page!=='driver';
+  $('#activity').hidden=page!=='activity';
+  $('#settings').hidden=page!=='settings';
+- if(page==='settings'){renderOwners();renderUserSettings();renderFleetSettings();}
++ if(page==='settings'){renderOwners();renderUserSettings();renderFleetSettings();renderCustomerSettings();}
+  document.querySelectorAll('[data-permission]').forEach(el=>el.hidden=!can(el.dataset.permission));
+  $('#vehicle-status').hidden=page!=='dispatch'||!can('fleetMap');
+  $('#driver-map-panel').hidden=!can('gps')&&!can('driverRide');
+@@ -467,7 +480,11 @@ function renderQueue(){
+  $('#maphint').textContent=selected?driverName(selected)+' · vyberte zakázku':'Vyberte volné vozidlo';
+  $('#queue').innerHTML=jobs.map(j=>'<div class="job-card"><details class="job-menu"><summary aria-label="Možnosti zakázky '+j.id+'">⋯</summary><div><button type="button" data-job-edit="cancelJob" data-id="'+j.id+'">Zrušit zakázku</button><button type="button" data-job-edit="editPickupTime" data-id="'+j.id+'">Upravit čas vyzvednutí</button><button type="button" data-job-edit="editJob" data-id="'+j.id+'">Upravit údaje zakázky</button></div></details><button class="job" data-job="'+j.id+'" '+(j.status!=='waiting'||!can('assign')?'disabled':'')+'><div class="jobtop"><b>'+esc(j.name)+'</b><span class="badge">'+statusText[j.status]+'</span></div>'+jobRoute(j)+'<div class="jobfoot"><div class="job-times"><span>Vytvořeno '+jobTime(j.created)+'</span>'+
+    (scheduledJob(j)||'<span>Co nejdříve</span>')+(j.driver?'<span>'+esc(driverName(j.driver))+'</span>':'')+
+-   '</div><strong>'+cash(j.cents)+'</strong></div></button>'+
++   (j.payment?'<span>Zákaznická objednávka · '+(j.payment==='card'?'Kartou u řidiče':'Hotově')+'</span>':'')+
++   (j.phone?'<span>Tel. '+esc(j.phone)+'</span>':'')+
++   (j.confirmedAt?'<span>Potvrzeno zákazníkovi</span>':'')+
++   '</div><strong>'+(j.payment&&!j.priceSet?'Čeká na cenu':cash(j.cents))+'</strong></div></button>'+
++   (j.status==='waiting'&&j.payment&&!j.confirmedAt&&can('edit')?'<div class="assignment-status"><button type="button" data-confirm-customer="'+j.id+'">Potvrdit zákazníkovi</button></div>':'')+
+    (j.status==='assigned'?'<div class="assignment-status"><span data-assignment-countdown="'+j.id+'"></span>'+
+      (can('assign')?'<button type="button" data-requeue="'+j.id+'" hidden>Vrátit k přeřazení</button>':'')+'</div>':'')+'</div>').join('')||'<p class="empty">Žádné zakázky</p>';
+  updateAssignmentTimers();
+@@ -528,7 +545,8 @@ function renderDriver(){
+  const gpsStatus=gpsText||(fresh(pos)?'GPS přesnost ±'+Math.round(pos.accuracy)+' m':'Poloha se nesdílí.');
+  $('#own-ride fieldset').disabled=Boolean(j);
+  $('#own-ride-status').hidden=!j;
+- $('#driver-summary').innerHTML='<div class="drivergrid"><div><section class="panel detail ride-panel"><h2>'+(j?.status==='assigned'?'Nová zakázka':'Aktuální zakázka')+'</h2>'+(j?'<p><b>#'+j.id+' · '+esc(j.name)+' · '+cash(j.cents)+'</b></p><p>'+statusText[j.status]+(j.scheduled?' · '+scheduledJob(j):'')+'</p>'+jobRoute(j)+(j.note?'<p>'+esc(j.note)+'</p>':'')+'<div class="ride-actions">'+driverActions(j)+'</div>':'<p>Čekáte na novou zakázku od dispečera.</p>')+
++ $('#driver-summary').innerHTML='<div class="drivergrid"><div><section class="panel detail ride-panel"><h2>'+(j?.status==='assigned'?'Nová zakázka':'Aktuální zakázka')+'</h2>'+(j?'<p><b>#'+j.id+' · '+esc(j.name)+' · '+cash(j.cents)+'</b></p><p>'+statusText[j.status]+(j.scheduled?' · '+scheduledJob(j):'')+'</p>'+jobRoute(j)+(j.payment?'<p>Platba '+(j.payment==='card'?'kartou u řidiče':'hotově')+'</p>':'')+
++   (j.phone?'<p>Tel. '+esc(j.phone)+'</p>':'')+(j.note?'<p>'+esc(j.note)+'</p>':'')+'<div class="ride-actions">'+driverActions(j)+'</div>':'<p>Čekáte na novou zakázku od dispečera.</p>')+
+    '<button type="button" class="ride-sound" data-ride-sound>'+(rideAudio?.state==='running'?'Vyzkoušet zvuk':'Zapnout zvuk zakázek')+'</button>'+(nativeLocation?'':'<button type="button" class="ride-sound" data-ride-push>'+
+    (ridePushEnabled?'Oznámení jsou zapnutá':'Zapnout oznámení zakázek')+'</button>')+'</section></div><div><section class="panel detail"><h2>Dostupnost</h2><div class="actions"><button data-availability aria-pressed="'+Boolean(state.occupied?.[actor])+'" '+(j?'disabled':'')+'>'+(state.occupied?.[actor]?'Nastavit jako volný':'Nastavit jako obsazený')+'</button></div></section><section class="panel detail"><h2>Sdílení polohy</h2><p>'+esc(gpsStatus)+'</p><div class="actions"><button data-gps>'+ (!gpsRunning()?(state.shiftOpen?'Obnovit GPS':'Zahájit směnu a zapnout GPS'):'Ukončit směnu')+'</button></div></section><section class="panel detail"><h2>Dnešní jízdy</h2><div class="actions"><button data-page="history">Otevřít denní přehled</button></div></section></div></div>';
+  const summary=$('#driver-summary');
+@@ -1152,7 +1170,7 @@ document.addEventListener('click',async e=>{
+    $('#job-edit-title').textContent={cancelJob:'Zrušit zakázku',editPickupTime:'Upravit čas vyzvednutí',editJob:'Upravit údaje zakázky'}[d.jobEdit]+' č. '+job.id;
+    $('#job-edit-submit').textContent=editing||timing?'Uložit':'Zrušit zakázku';
+    for(const field of ['name','pickup','dropoff','note','scheduled']) form.elements[field].value=job[field]??'';
+-   form.elements.price.value=(job.cents/100).toFixed(2);
++   form.elements.price.value=job.payment&&!job.priceSet?'':(job.cents/100).toFixed(2);
+    $('#job-editor').showModal();
+    return;
+  }
+@@ -1594,3 +1612,26 @@ document.addEventListener('visibilitychange',()=>{
+ 
+ window.addEventListener('offline',showSync);
+ window.addEventListener('online',()=>{showSync();if(live) void poll(); else void restoreSession();});
++
++$('#customer-settings-form').addEventListener('submit',async event=>{
++ event.preventDefault();
++ const form=event.currentTarget;
++ const button=form.querySelector('button');
++ button.disabled=true;
++ try{
++   const result=await api('customer-settings',Object.fromEntries(new FormData(form)));
++   form.dataset.ready='';
++   receive(result);
++   renderCustomerSettings();
++   notify('Nastavení pro zákazníky bylo uloženo.');
++ }catch(error){notify(error.message);}
++ finally{button.disabled=false;}
++});
++$('#queue').addEventListener('click',async event=>{
++ const button=event.target.closest('[data-confirm-customer]');
++ if(!button) return;
++ button.disabled=true;
++ try{
++   if(await perform({type:'confirmCustomerRide',id:Number(button.dataset.confirmCustomer)})) notify('Objednávka byla potvrzena.');
++ }finally{button.disabled=false;}
++});
+diff --git a/Public/customer/app.js b/Public/customer/app.js
+new file mode 100644
+index 0000000..f9df88e
+--- /dev/null
++++ b/Public/customer/app.js
+@@ -0,0 +1,330 @@
++const $=selector=>document.querySelector(selector);
++const panel=$('#panel');
++const menu=$('#menu');
++const rideForm=$('#ride');
++const profileForm=$('#profile-form');
++const bookingPoints={};
++const titles={booking:'Objednat jízdu',history:'Moje historie jízd',offers:'Moje akce',contacts:'Kontakty',profile:'Nastavení účtu'};
++const statuses={waiting:'Čeká na potvrzení',confirmed:'Potvrzeno',assigned:'Přiděleno řidiči',accepted:'Řidič jede k vám',onboard:'Probíhá',done:'Dokončeno',cancelled:'Zrušeno'};
++const dateTime=new Intl.DateTimeFormat('cs-CZ',{dateStyle:'medium',timeStyle:'short',timeZone:'Europe/Prague'});
++const currency=new Intl.NumberFormat('cs-CZ',{style:'currency',currency:'CZK'});
++let account, map, positionDot, pickupPin, mapPicking=false, page, requestId;
++function element(tag,value,className){
++  const node=document.createElement(tag);
++  node.textContent=value;
++  if(className) node.className=className;
++  return node;
++}
++async function api(path,body){
++  const response=await fetch('/api/customer/'+path,{
++    method:body?'POST':'GET',cache:'no-store',
++    headers:body?{'Content-Type':'application/json'}:{},
++    body:body&&JSON.stringify(body),signal:AbortSignal.timeout(15000)
++  });
++  const data=await response.json();
++  if(!response.ok){
++    if(response.status===401&&account) signOut();
++    throw Object.assign(Error(data.error||'Spojení se Startaxi selhalo.'),{status:response.status});
++  }
++  return data;
++}
++function message(text='',success=false){
++  const node=$('#panel-message');
++  node.textContent=text;
++  node.toggleAttribute('data-success',success);
++}
++function mapMessage(text){
++  $('#map-message').hidden=!text;
++  $('#map-message').textContent=text;
++}
++function resetRide(){
++  rideForm.reset();
++  rideForm.elements.timing.dispatchEvent(new Event('change'));
++  for(const field of ['pickup','dropoff']){
++    delete bookingPoints[field];
++    $('#'+field+'-suggestions').replaceChildren();
++  }
++  pickupPin?.remove();
++  pickupPin=null;
++  requestId=null;
++}
++function signOut(){
++  account=null;
++  menu.close();
++  panel.close();
++  resetRide();
++  positionDot?.remove();
++  positionDot=null;
++  mapPicking=false;
++  $('#app').hidden=true;
++  $('#auth').hidden=false;
++  $('#auth-error').textContent='';
++  $('#last-ride').hidden=true;
++  $('#book').textContent='Objednat jízdu';
++  mapMessage('');
++}
++function signIn(profile){
++  account=profile;
++  $('#customer-name').textContent=profile.firstName+' '+profile.lastName;
++  $('#auth').hidden=true;
++  $('#app').hidden=false;
++  startMap();
++  map?.setView([50.7695,15.0514],14);
++  map?.invalidateSize();
++  void refreshRides().catch(()=>{});
++  navigator.permissions?.query({name:'geolocation'}).then(permission=>{
++    if(permission.state==='granted'&&account===profile) locate();
++  }).catch(()=>{});
++}
++function startMap(){
++  if(map||!window.L){
++    if(!map) mapMessage('Mapu se nepodařilo načíst. Adresy můžete zadat ručně.');
++    return;
++  }
++  map=window.L.map('map',{zoomControl:false}).setView([50.7695,15.0514],14);
++  window.L.control.zoom({position:'bottomright'}).addTo(map);
++  window.L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{
++    maxZoom:19,attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
++  }).addTo(map);
++  map.on('click',async event=>{
++    if(!mapPicking||!account) return;
++    const current=account;
++    mapPicking=false;
++    const point={lat:event.latlng.lat,lng:event.latlng.lng};
++    $('#book').textContent='Objednat jízdu';
++    mapMessage('');
++    await openPage('booking');
++    if(account!==current) return;
++    setPoint('pickup',point,'Bod na mapě '+point.lat.toFixed(5)+', '+point.lng.toFixed(5));
++    const fallback=rideForm.elements.pickup.value;
++    try{
++      const {address}=await api('reverse-geocode',{point});
++      if(account===current&&bookingPoints.pickup===point&&rideForm.elements.pickup.value===fallback&&address){
++        rideForm.elements.pickup.value=address;
++      }
++    }catch{}
++  });
++}
++function locate(){
++  if(!map||!navigator.geolocation){
++    mapMessage('Poloha není dostupná. Adresu můžete zadat ručně.');
++    return;
++  }
++  const current=account;
++  mapMessage('Hledám vaši polohu…');
++  navigator.geolocation.getCurrentPosition(({coords})=>{
++    if(account!==current) return;
++    const latlng=[coords.latitude,coords.longitude];
++    positionDot?.remove();
++    positionDot=window.L.circleMarker(latlng,{radius:9,color:'#fff',weight:3,fillColor:'#1765a5',fillOpacity:1}).bindTooltip('Moje poloha').addTo(map);
++    map.flyTo(latlng,16);
++    mapMessage(mapPicking?'Klepněte na místo vyzvednutí.':'');
++  },()=>{
++    if(account===current) mapMessage('Polohu se nepodařilo získat. Adresu můžete zadat ručně.');
++  },{enableHighAccuracy:true,timeout:10000,maximumAge:30000});
++}
++function setPoint(field,point,address){
++  bookingPoints[field]=point;
++  rideForm.elements[field].value=address;
++  $('#'+field+'-suggestions').replaceChildren();
++  if(field==='pickup'&&map){
++    pickupPin?.remove();
++    const icon=window.L.divIcon({className:'map-pin',iconSize:[19,19]});
++    pickupPin=window.L.marker([point.lat,point.lng],{icon,alt:'Místo vyzvednutí'}).addTo(map);
++  }
++}
++function renderRides(rides){
++  const list=$('#rides');
++  list.replaceChildren();
++  if(!rides.length) list.append(element('p','Zatím tu nejsou žádné jízdy.'));
++  for(const ride of rides){
++    const card=element('article','','ride-card');
++    const time=element('time',dateTime.format(ride.done??ride.created));
++    time.dateTime=new Date(ride.done??ride.created).toISOString();
++    const reservation=ride.scheduled?element('p','Vyzvednutí '+ride.scheduled.slice(0,10).split('-').reverse().join('.')+' v '+ride.scheduled.slice(11),'details'):null;
++    card.append(time,element('p',ride.pickup+' → '+ride.dropoff,'ride-route'));
++    if(reservation) card.append(reservation);
++    card.append(element('strong',statuses[ride.status]||ride.status));
++    if(ride.cents!==null) card.append(element('p',currency.format(ride.cents/100),'details'));
++    list.append(card);
++  }
++}
++async function refreshRides(){
++  const current=account;
++  const rides=await api('rides');
++  if(account!==current) return;
++  const latest=rides.find(ride=>!['done','cancelled'].includes(ride.status));
++  const lastRide=$('#last-ride');
++  lastRide.hidden=!latest;
++  if(latest) lastRide.textContent='Jízda č. '+latest.id+' · '+statuses[latest.status];
++  if(page==='history'&&panel.open) renderRides(rides);
++}
++function renderInfo(info,target){
++  target.replaceChildren();
++  if(target.id==='offer-list'){
++    if(!info.offers?.length){
++      target.append(element('p','Momentálně nemáte žádné akce.'));
++      return;
++    }
++    const list=element('ul','');
++    for(const offer of info.offers) list.append(element('li',offer));
++    target.append(list);
++    return;
++  }
++  if(!info.phone&&!info.email&&!info.hours) target.append(element('p','Kontakty zatím nejsou vyplněné.'));
++  if(info.phone){
++    const link=element('a',info.phone);
++    link.href='tel:'+info.phone.replace(/[^+0-9]/g,'');
++    const line=element('p','Dispečink ');
++    line.append(link);
++    target.append(line);
++  }
++  if(info.email){
++    const link=element('a',info.email);
++    link.href='mailto:'+encodeURIComponent(info.email).replace('%40','@');
++    const line=element('p','E-mail ');
++    line.append(link);
++    target.append(line);
++  }
++  if(info.hours) target.append(element('p','Provozní doba '+info.hours));
++}
++async function openPage(name){
++  if(!account) return;
++  page=name;
++  menu.close();
++  for(const id of Object.keys(titles)) $('#'+id).hidden=id!==name;
++  $('#panel-title').textContent=titles[name];
++  message();
++  if(!panel.open) panel.showModal();
++  try{
++    if(name==='profile'){
++      profileForm.reset();
++      for(const field of ['username','email','phone']) profileForm.elements[field].value=account[field];
++    }else if(name==='history'){
++      $('#rides').replaceChildren(element('p','Načítám jízdy…'));
++      await refreshRides();
++    }else if(name==='contacts'||name==='offers'){
++      const target=$(name==='contacts'?'#contact-list':'#offer-list');
++      target.replaceChildren(element('p','Načítám…'));
++      const info=await api('info');
++      if(page===name&&panel.open) renderInfo(info,target);
++    }
++  }catch(error){
++    if(page===name&&panel.open) message(error.message);
++  }
++}
++function bindForm(form,submit,showError){
++  form.addEventListener('submit',async event=>{
++    event.preventDefault();
++    const button=form.querySelector('button[type=submit]');
++    if(button.disabled) return;
++    button.disabled=true;
++    showError('');
++    try{await submit(Object.fromEntries(new FormData(form)));}
++    catch(error){showError(error.message);}
++    finally{button.disabled=false;}
++  });
++}
++for(const mode of ['login','register']){
++  const form=$('#'+mode);
++  bindForm(form,async data=>{
++    signIn(await api(mode,data));
++    form.reset();
++  },text=>{$('#auth-error').textContent=text;});
++}
++$('#switch-auth').addEventListener('click',event=>{
++  const register=$('#register').hidden;
++  $('#register').hidden=!register;
++  $('#login').hidden=register;
++  $('#auth-title').textContent=register?'Vytvořit účet':'Přihlášení';
++  $('#auth-error').textContent='';
++  event.currentTarget.textContent=register?'Zpět k přihlášení':'Vytvořit účet';
++  $(register?'#register input':'#login input').focus();
++});
++$('#open-menu').addEventListener('click',()=>{
++  $('#menu-error').textContent='';
++  menu.showModal();
++});
++for(const button of document.querySelectorAll('[data-close]')){
++  button.addEventListener('click',()=>button.closest('dialog').close());
++}
++for(const button of document.querySelectorAll('[data-page]')){
++  button.addEventListener('click',()=>openPage(button.dataset.page));
++}
++$('#locate').addEventListener('click',locate);
++$('#book').addEventListener('click',()=>{
++  mapPicking=false;
++  $('#book').textContent='Objednat jízdu';
++  if(map) mapMessage('');
++  void openPage('booking');
++});
++$('#last-ride').addEventListener('click',()=>openPage('history'));
++$('#logout').addEventListener('click',async event=>{
++  const button=event.currentTarget;
++  button.disabled=true;
++  try{await api('logout',{});signOut();}
++  catch(error){$('#menu-error').textContent=error.message;}
++  finally{button.disabled=false;}
++});
++rideForm.elements.timing.addEventListener('change',()=>{
++  const later=rideForm.elements.timing.value==='later';
++  $('#scheduled-label').hidden=!later;
++  rideForm.elements.scheduled.disabled=!later;
++  rideForm.elements.scheduled.required=later;
++});
++for(const field of ['pickup','dropoff']){
++  const input=rideForm.elements[field];
++  const list=$('#'+field+'-suggestions');
++  const button=$('[data-search='+field+']');
++  input.addEventListener('input',()=>{
++    delete bookingPoints[field];
++    list.replaceChildren();
++    if(field==='pickup'){pickupPin?.remove();pickupPin=null;}
++  });
++  button.addEventListener('click',async()=>{
++    const address=input.value.trim();
++    if(address.length<3){message('Zadejte alespoň tři znaky adresy.');return;}
++    button.disabled=true;
++    message();
++    try{
++      const result=await api('geocode',{address});
++      if(input.value.trim()!==address||page!=='booking') return;
++      list.replaceChildren();
++      for(const suggestion of result.suggestions){
++        const option=element('button',suggestion.address);
++        option.type='button';
++        option.addEventListener('click',()=>{setPoint(field,suggestion.point,suggestion.address);input.focus();});
++        list.append(option);
++      }
++      if(!result.suggestions.length) list.append(element('p','Adresa nenalezena. Můžete ji odeslat ručně.'));
++    }catch(error){message(error.message);}
++    finally{button.disabled=false;}
++  });
++}
++$('#pick-on-map').addEventListener('click',()=>{
++  if(!map){message('Mapa není dostupná. Adresu můžete zadat ručně.');return;}
++  mapPicking=true;
++  panel.close();
++  mapMessage('Klepněte na místo vyzvednutí.');
++  $('#book').textContent='Zpět k objednávce';
++});
++bindForm(rideForm,async data=>{
++  requestId??=crypto.randomUUID();
++  await api('rides',{...data,requestId,pickupPoint:bookingPoints.pickup,target:bookingPoints.dropoff});
++  resetRide();
++  await openPage('history');
++  message('Objednávka byla odeslána dispečinku.',true);
++},message);
++bindForm(profileForm,async data=>{
++  account=await api('profile',data);
++  profileForm.elements.currentPassword.value='';
++  profileForm.elements.newPassword.value='';
++  message('Změny byly uloženy.',true);
++},message);
++
++try{signIn(await api('profile'));}
++catch(error){if(error.status!==401) $('#auth-error').textContent='Připojení ke Startaxi se nepodařilo ověřit.';}
++if('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(()=>{});
++setInterval(()=>{
++  if(account&&!document.hidden) void refreshRides().catch(()=>{});
++},12000);
+diff --git a/Public/customer/index.html b/Public/customer/index.html
+new file mode 100644
+index 0000000..23cf5c7
+--- /dev/null
++++ b/Public/customer/index.html
+@@ -0,0 +1,99 @@
++<!doctype html>
++<html lang="cs">
++<head>
++  <meta charset="utf-8">
++  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
++  <meta name="theme-color" content="#111e2c">
++  <title>Startaxi | Objednat taxi v Liberci</title>
++  <link rel="manifest" href="./manifest.webmanifest">
++  <link rel="icon" href="/taximetr.svg" type="image/svg+xml">
++  <link rel="apple-touch-icon" href="/taximetr-192.png">
++  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIINfQ3ynhpgHYQEpGKO1MydlZLhykYfjhk=" crossorigin="">
++  <link rel="stylesheet" href="./style.css">
++  <script defer src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
++  <script type="module" src="./app.js"></script>
++</head>
++<body>
++  <main id="auth">
++    <section class="auth-card">
++      <div class="brand"><img src="/taximetr-192.png" alt="" width="46" height="46"><div><b>Startaxi</b><small>Taxi Liberec</small></div></div>
++      <h1 id="auth-title">Přihlášení</h1>
++      <form id="login">
++        <label>Přihlašovací jméno<input name="username" required autocomplete="username" maxlength="40" autocapitalize="none"></label>
++        <label>Heslo<input name="password" type="password" required autocomplete="current-password" maxlength="128"></label>
++        <button class="primary" type="submit">Přihlásit se</button>
++      </form>
++      <form id="register" hidden>
++        <div class="columns">
++          <label>Jméno<input name="firstName" required maxlength="60" autocomplete="given-name"></label>
++          <label>Příjmení<input name="lastName" required maxlength="60" autocomplete="family-name"></label>
++        </div>
++        <label>Telefonní číslo<input name="phone" type="tel" required maxlength="32" autocomplete="tel"></label>
++        <label>E-mail<input name="email" type="email" required maxlength="254" autocomplete="email"></label>
++        <label>Přihlašovací jméno<input name="username" required minlength="3" maxlength="40" autocomplete="username" autocapitalize="none"></label>
++        <label>Heslo (nejméně 12 znaků)<input name="password" type="password" required minlength="12" maxlength="128" autocomplete="new-password"></label>
++        <button class="primary" type="submit">Vytvořit účet</button>
++      </form>
++      <p id="auth-error" role="alert"></p>
++      <button id="switch-auth" class="text-button" type="button">Vytvořit účet</button>
++    </section>
++  </main>
++  <main id="app" hidden>
++    <div id="map" aria-label="Mapa Liberce a vaše poloha"></div>
++    <header class="map-header">
++      <button id="open-menu" class="floating" type="button" aria-label="Otevřít menu">☰</button>
++      <div class="brand map-brand"><img src="/taximetr-192.png" alt="" width="34" height="34"><b>Startaxi</b></div>
++      <button id="locate" class="floating" type="button" aria-label="Zobrazit moji polohu">◎</button>
++    </header>
++    <p id="map-message" role="status" hidden></p>
++    <div class="map-actions">
++      <button id="last-ride" type="button" hidden></button>
++      <button id="book" class="primary" type="button">Objednat jízdu</button>
++    </div>
++    <dialog id="menu" aria-labelledby="menu-title">
++      <div class="dialog-head"><h2 id="menu-title">Startaxi</h2><button type="button" class="close" data-close aria-label="Zavřít menu">×</button></div>
++      <p id="customer-name"></p>
++      <nav aria-label="Menu zákazníka">
++        <button type="button" data-page="booking">Objednat jízdu</button>
++        <button type="button" data-page="history">Moje historie jízd</button>
++        <button type="button" data-page="offers">Moje akce</button>
++        <button type="button" data-page="contacts">Kontakty</button>
++        <button type="button" data-page="profile">Nastavení účtu</button>
++      </nav>
++      <button type="button" id="logout" class="text-button">Odhlásit</button>
++      <p id="menu-error" role="alert"></p>
++    </dialog>
++    <dialog id="panel" aria-labelledby="panel-title">
++      <div class="dialog-head"><h2 id="panel-title"></h2><button type="button" class="close" data-close aria-label="Zavřít">×</button></div>
++      <p id="panel-message" role="status"></p>
++      <section id="booking" hidden>
++        <form id="ride">
++          <label>Adresa vyzvednutí<input name="pickup" required maxlength="200"></label>
++          <div class="address-actions"><button type="button" data-search="pickup">Vyhledat adresu</button><button type="button" id="pick-on-map">Vybrat na mapě</button></div>
++          <div class="suggestions" id="pickup-suggestions"></div>
++          <label>Cílová adresa<input name="dropoff" required maxlength="200"></label>
++          <div class="address-actions"><button type="button" data-search="dropoff">Vyhledat adresu</button></div>
++          <div class="suggestions" id="dropoff-suggestions"></div>
++          <label>Vyzvednutí<select name="timing"><option value="now">Co nejdřív</option><option value="later">Na určitý čas</option></select></label>
++          <label id="scheduled-label" hidden>Datum a čas (Česko)<input name="scheduled" type="datetime-local" disabled></label>
++          <fieldset><legend>Platba po jízdě</legend><div class="payment"><label><input type="radio" name="payment" value="cash" checked> Hotově</label><label><input type="radio" name="payment" value="card"> Kartou u řidiče</label></div></fieldset>
++          <button class="primary" type="submit">Odeslat objednávku</button>
++        </form>
++      </section>
++      <section id="history" hidden><div id="rides"></div></section>
++      <section id="offers" hidden><div id="offer-list"></div></section>
++      <section id="contacts" hidden><div id="contact-list"></div></section>
++      <section id="profile" hidden>
++        <form id="profile-form">
++          <label>Přihlašovací jméno<input name="username" autocomplete="username" required minlength="3" maxlength="40" autocapitalize="none"></label>
++          <label>E-mail<input name="email" type="email" autocomplete="email" required maxlength="254"></label>
++          <label>Telefonní číslo<input name="phone" type="tel" autocomplete="tel" required maxlength="32"></label>
++          <label>Stávající heslo<input name="currentPassword" type="password" autocomplete="current-password" required maxlength="128"></label>
++          <label>Nové heslo (volitelné)<input name="newPassword" type="password" autocomplete="new-password" minlength="12" maxlength="128"></label>
++          <button class="primary" type="submit">Uložit změny</button>
++        </form>
++      </section>
++    </dialog>
++  </main>
++</body>
++</html>
+diff --git a/Public/customer/manifest.webmanifest b/Public/customer/manifest.webmanifest
+new file mode 100644
+index 0000000..71af8d8
+--- /dev/null
++++ b/Public/customer/manifest.webmanifest
+@@ -0,0 +1,15 @@
++{
++  "id": "/customer/",
++  "name": "Startaxi – Taxi Liberec",
++  "short_name": "Startaxi",
++  "lang": "cs",
++  "start_url": "/customer/",
++  "scope": "/customer/",
++  "display": "standalone",
++  "background_color": "#111e2c",
++  "theme_color": "#111e2c",
++  "icons": [
++    {"src":"/taximetr-192.png","sizes":"192x192","type":"image/png"},
++    {"src":"/taximetr-512.png","sizes":"512x512","type":"image/png"}
++  ]
++}
+diff --git a/Public/customer/style.css b/Public/customer/style.css
+new file mode 100644
+index 0000000..29e8e0c
+--- /dev/null
++++ b/Public/customer/style.css
+@@ -0,0 +1,76 @@
++:root {
++  color-scheme: light;
++  font: 16px/1.45 system-ui, sans-serif;
++  --ink: #111e2c;
++  --paper: #fff;
++  --muted: #4b5c70;
++  --line: #d6e0e9;
++  --gold: #ffcf39;
++  --shadow: 0 14px 40px #111e2c29;
++}
++* { box-sizing: border-box; }
++[hidden] { display: none !important; }
++body { margin: 0; color: var(--ink); background: #edf2f7; }
++h1, h2, p { margin: 0; }
++h1 { font-size: clamp(1.65rem, 5vw, 2.15rem); line-height: 1.15; }
++h2 { font-size: 1.4rem; }
++button, input, select { font: inherit; }
++button { border: 1px solid var(--line); border-radius: 10px; padding: .65rem .9rem; color: var(--ink); background: var(--paper); cursor: pointer; min-height: 44px; }
++button:hover { background: #edf2f7; }
++button:disabled { opacity: .55; cursor: wait; }
++:focus-visible { outline: 3px solid #1765a5; outline-offset: 2px; }
++.primary { border-color: var(--gold); font-weight: 750; background: var(--gold); }
++.primary:hover { background: #f5c328; }
++.text-button { padding-inline: 0; border: 0; color: #264a66; text-decoration: underline; background: transparent; font-size: .875rem; }
++#auth { min-height: 100dvh; display: grid; place-items: center; padding: 1rem; background: radial-gradient(ellipse at top, #2b4256, #111e2c 70%); }
++.auth-card { width: min(100%, 27rem); background: var(--paper); border-radius: 22px; padding: clamp(1.15rem, 5vw, 2rem); box-shadow: var(--shadow); }
++.brand { display: flex; align-items: center; gap: .7rem; }
++.brand img { border-radius: 10px; }
++.brand b { display: block; font-size: 1.12rem; }
++.brand small { display: block; color: var(--muted); }
++.auth-card h1 { margin-block: 1.35rem 1rem; }
++form { display: grid; gap: .85rem; }
++label { display: grid; gap: .3rem; font-size: .9rem; font-weight: 650; }
++input:not([type=radio]), select { width: 100%; min-width: 0; min-height: 45px; padding: .55rem .7rem; border: 1px solid var(--line); border-radius: 10px; color: var(--ink); background: #f8fafc; font-size: 1rem; }
++form > .primary { margin-top: .25rem; }
++.columns { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; }
++#auth-error, #menu-error, #panel-message { color: #9c2d24; font-size: .9rem; }
++#panel-message[data-success] { color: #23603d; }
++#auth-error:not(:empty), #menu-error:not(:empty) { margin-block: .7rem .25rem; }
++#panel-message:not(:empty) { margin-bottom: .8rem; }
++#app, #map { position: fixed; inset: 0; }
++#map { z-index: 0; background: #e1ebee; }
++.map-header { position: absolute; z-index: 2; inset: max(.8rem, env(safe-area-inset-top)) 0 auto; padding-inline: 1rem; display: flex; align-items: start; justify-content: space-between; pointer-events: none; }
++.map-header > * { pointer-events: auto; }
++.map-brand, .floating { background: var(--paper); border: 0; box-shadow: var(--shadow); border-radius: 13px; padding: .55rem .75rem; }
++.floating { width: 48px; height: 48px; font-size: 1.35rem; line-height: 1; }
++.map-actions { position: absolute; z-index: 2; left: 50%; transform: translateX(-50%); bottom: max(2.15rem, calc(env(safe-area-inset-bottom) + 1rem)); width: min(calc(100% - 8rem), 23rem); min-width: 11rem; display: grid; gap: .45rem; }
++.map-actions button { box-shadow: var(--shadow); }
++#map-message { position: absolute; z-index: 2; left: 50%; transform: translateX(-50%); top: 4.6rem; width: min(calc(100% - 2rem), 28rem); padding: .65rem .8rem; border-radius: 10px; background: var(--paper); box-shadow: var(--shadow); text-align: center; }
++dialog { border: 0; padding: 1.1rem; color: var(--ink); box-shadow: var(--shadow); }
++dialog::backdrop { background: #111e2c80; }
++#panel { width: min(calc(100% - 1rem), 33rem); max-height: 90dvh; border-radius: 19px; }
++#menu { width: min(22rem, 90vw); max-width: none; height: 100dvh; max-height: none; margin: 0 auto 0 0; padding: max(1rem, env(safe-area-inset-top)) 1rem 1rem; border-radius: 0 18px 18px 0; }
++.dialog-head { display: flex; align-items: center; justify-content: space-between; gap: .75rem; margin-bottom: .65rem; }
++.close { min-width: 44px; font-size: 1.4rem; padding-block: .2rem; }
++#menu nav { display: grid; gap: .45rem; margin-block: 1rem; }
++#menu nav button { text-align: left; }
++#customer-name { color: var(--muted); }
++.address-actions, .payment { display: flex; gap: .55rem; flex-wrap: wrap; }
++.address-actions button, .suggestions button { font-size: .875rem; }
++.suggestions { display: grid; gap: .3rem; }
++.suggestions:empty { display: none; }
++.suggestions button { text-align: left; }
++fieldset { min-width: 0; border: 1px solid var(--line); border-radius: 10px; margin: 0; }
++legend { font-weight: 650; font-size: .875rem; }
++.payment label { display: flex; align-items: center; min-height: 35px; }
++.ride-card { padding: .8rem 0; border-bottom: 1px solid var(--line); }
++.ride-card:last-child { border-bottom: 0; }
++.ride-card time, .ride-card .details { display: block; color: var(--muted); font-size: .875rem; }
++.ride-route { margin-block: .2rem; overflow-wrap: anywhere; }
++#contact-list p { margin-block: .5rem; overflow-wrap: anywhere; }
++#offer-list ul { margin-block: .5rem; padding-left: 1.25rem; }
++.map-pin { background: #ffcf39; border: 3px solid #111e2c; border-radius: 50%; box-shadow: 0 1px 6px #10233666; }
++@media (max-width: 500px) {
++  #panel { margin: auto .5rem max(.5rem, env(safe-area-inset-bottom)); }
++}
+diff --git a/Public/customer/sw.js b/Public/customer/sw.js
+new file mode 100644
+index 0000000..d3f620a
+--- /dev/null
++++ b/Public/customer/sw.js
+@@ -0,0 +1,9 @@
++self.addEventListener('install',event=>event.waitUntil(self.skipWaiting()));
++self.addEventListener('activate',event=>event.waitUntil(self.clients.claim()));
++self.addEventListener('fetch',event=>{
++  if(event.request.mode!=='navigate') return;
++  event.respondWith(fetch(event.request).catch(()=>new Response(
++    '<!doctype html><html lang="cs"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Startaxi</title><h1>Startaxi</h1><p>Objednávky potřebují připojení k internetu.</p><a href="/customer/">Zkusit znovu</a></html>',
++    {headers:{'Content-Type':'text/html; charset=utf-8'}}
++  )));
++});
+diff --git a/Public/index.html b/Public/index.html
+index f020bd3..c40c38e 100644
+--- a/Public/index.html
++++ b/Public/index.html
+@@ -31,6 +31,17 @@
+ </section>
+ <section id="activity" hidden></section>
+ <section id="settings" class="drivergrid" hidden>
++  <section id="customer-settings" class="panel detail" hidden>
++    <h2>Zákaznická aplikace</h2>
++    <p><a href="/customer/" target="_blank" rel="noopener">Otevřít objednávky pro zákazníky</a></p>
++    <form id="customer-settings-form">
++      <label>Telefon na dispečink<input name="phone" type="tel" maxlength="32"></label>
++      <label>Kontaktní e-mail<input name="email" type="email" maxlength="254"></label>
++      <label>Provozní doba<input name="hours" maxlength="200"></label>
++      <label>Akce a kupóny (jedna položka na řádek)<textarea name="offers" maxlength="2000" rows="4"></textarea></label>
++      <button class="primary" type="submit">Uložit nastavení pro zákazníky</button>
++    </form>
++  </section>
+   <section class="panel detail">
+     <h2>Můj profil</h2><p id="profile-vehicle" hidden></p>
+     <form id="profile-form">
+diff --git a/Public/model.js b/Public/model.js
+index dac4e62..340433e 100644
+--- a/Public/model.js
++++ b/Public/model.js
+@@ -120,6 +120,7 @@ export function change(s,actor,a,now=Date.now()){
+         requireThat([target,pickupPoint].every(p=>p==null||validPoint(p)),'Neplatné souřadnice adresy.');
+         requireThat(pickup.trim()===job.pickup||validPoint(pickupPoint),'Vyberte adresu vyzvednutí se souřadnicemi.');
+         requireThat(dropoff.trim()===job.dropoff||validPoint(target),'Vyberte adresu doručení se souřadnicemi.');
++        if(job.customerId) job.priceSet=true;
+         Object.assign(job,{name:name.trim(),pickup:pickup.trim(),dropoff:dropoff.trim(),note,cents,
+           pickupPoint:pickup.trim()===job.pickup?(pickupPoint??job.pickupPoint):pickupPoint,
+           target:dropoff.trim()===job.dropoff?(target??job.target):target});
+@@ -134,6 +135,7 @@ export function change(s,actor,a,now=Date.now()){
+       break;
+     case 'assign':
+       requireThat(job?.status==='waiting'&&fleet(s).some(d=>d.id===a.driver)&&allows(permissionsFor(s,a.driver),'driverRide')&&!busy(s,a.driver)&&!s.occupied?.[a.driver],'Řidič nebo zakázka už nejsou k dispozici.');
++      requireThat(!job.customerId||job.priceSet,'Nejdříve uložte cenu v úpravě zakázky.');
+       Object.assign(job,{driver:a.driver,status:'assigned',assignedAt:now});
+       break;
+     case 'requeue':
+diff --git a/Public/sw.js b/Public/sw.js
+index a45436f..a3a7897 100644
+--- a/Public/sw.js
++++ b/Public/sw.js
+@@ -1,7 +1,7 @@
+ self.addEventListener('install', event => event.waitUntil(self.skipWaiting()));
+ self.addEventListener('activate', event => event.waitUntil(self.clients.claim()));
+ self.addEventListener('fetch', event => {
+-  if(event.request.mode!=='navigate') return;
++  if(event.request.mode!=='navigate'||new URL(event.request.url).pathname.startsWith('/customer/')) return;
+   event.respondWith(fetch(event.request).catch(()=>new Response(
+     '<!doctype html><html lang="cs"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>taximetr</title><h1>taximetr</h1><p>Dispečink potřebuje připojení k internetu.</p><a href="/">Zkusit znovu</a></html>',
+     {headers:{'Content-Type':'text/html; charset=utf-8'}}
+@@ -17,7 +17,10 @@ self.addEventListener('push', event=>{
+ self.addEventListener('notificationclick', event=>{
+   event.notification.close();
+   event.waitUntil(self.clients.matchAll({type:'window',includeUncontrolled:true}).then(clients=>{
+-    const app=clients.find(client=>new URL(client.url).origin===self.location.origin);
++    const app=clients.find(client=>{
++      const url=new URL(client.url);
++      return url.origin===self.location.origin&&!url.pathname.startsWith('/customer/');
++    });
+     return app?app.focus():self.clients.openWindow('/');
+   }));
+ });
+diff --git a/build.mjs b/build.mjs
+index 8e2d977..dde2545 100644
+--- a/build.mjs
++++ b/build.mjs
+@@ -1,6 +1,8 @@
+ import {access,readFile,writeFile,mkdir,rm} from 'node:fs/promises';
+ 
+ const files={
++  'customer/index.html':'text/html','customer/style.css':'text/css','customer/app.js':'text/javascript',
++  'customer/manifest.webmanifest':'application/manifest+json','customer/sw.js':'text/javascript',
+   'index.html':'text/html','style.css':'text/css','app.js':'text/javascript','model.js':'text/javascript',
+   'manifest.webmanifest':'application/manifest+json','sw.js':'text/javascript',
+   'taximetr.svg':'image/svg+xml','taximetr-192.png':'image/png','taximetr-512.png':'image/png'
+@@ -12,7 +14,8 @@ const assets=Object.fromEntries(await Promise.all(Object.entries(files).map(asyn
+   return ['/'+name,[binary?type:type+'; charset=utf-8',binary?content.toString('base64'):content,binary]];
+ })));
+ const model=assets['/model.js'][1].replace(/^export /gm,'');
++const customer=await readFile('customer-api.js','utf8');
+ const worker=(await readFile('worker.js','utf8')).replace(/^import .*;\n/gm,'');
+ await rm('dist/server',{recursive:true,force:true});
+ await mkdir('dist/server',{recursive:true});
+-await writeFile('dist/server/index.js','const assets = '+JSON.stringify(assets)+';\n'+model+'\n'+worker);
++await writeFile('dist/server/index.js','const assets = '+JSON.stringify(assets)+';\n'+model+'\n'+customer+'\n'+worker);
+diff --git a/customer-api.js b/customer-api.js
+new file mode 100644
+index 0000000..7fce389
+--- /dev/null
++++ b/customer-api.js
+@@ -0,0 +1,180 @@
++// Included by build.mjs in the Startaxi Worker.
++const customerSessionSeconds=30*86400;
++const customerCookie=(secret,age)=>'startaxi_customer='+secret+'; Max-Age='+age+'; Path=/api/customer/; Secure; HttpOnly; SameSite=Strict';
++const customerSessionHash=secret=>hash('startaxi/customer/session/v1/'+secret);
++const customerSecret=()=>hex(crypto.getRandomValues(new Uint8Array(32)));
++const customerProfile=({firstName,lastName,username,phone,email})=>({firstName,lastName,username,phone,email});
++const customerText=(value,max,required=false)=>{
++  if(value==null&&!required) return '';
++  if(typeof value!=='string'||value.length>max||(required&&!value.trim())) throw Error('Zkontrolujte povinné údaje a jejich délku.');
++  return value.trim();
++};
++function customerContact(input){
++  const phone=customerText(input.phone,32,true),email=customerText(input.email,254,true);
++  if(!/^\+?[\d ()-]+$/.test(phone)||phone.replace(/\D/g,'').length<7||
++      phone.replace(/\D/g,'').length>15) throw Error('Zadejte platné telefonní číslo.');
++  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw Error('Zadejte platný e-mail.');
++  return {phone,email};
++}
++function customerSettings(input){
++  return {
++    phone:customerText(input.phone,32),
++    email:customerText(input.email,254),
++    hours:customerText(input.hours,200),
++    offers:customerText(input.offers,2000).split('\n').map(line=>line.trim()).filter(Boolean)
++  };
++}
++function customerUsername(value){
++  const username=normalizeUsername(value);
++  if(!/^[a-z0-9._-]{3,40}$/.test(username)) throw Error('Přihlašovací jméno musí mít 3 až 40 znaků bez diakritiky a mezer.');
++  return username;
++}
++function customerUnique(state,username,id){
++  if(Object.values(state.customerAccounts||{}).some(account=>account.username===username&&account.id!==id)){
++    throw Error('Toto přihlašovací jméno už existuje.');
++  }
++}
++function addCustomerSession(state,digest,id){
++  const now=Date.now();
++  const sessions=(state.customerSessions??={});
++  for(const key of Object.keys(sessions)) if(sessions[key].expires<=now) delete sessions[key];
++  sessions[digest]={id,expires:now+customerSessionSeconds*1000};
++}
++async function customerThrottle(db,category,key,max){
++  const bucket=await hash(category+':'+key);
++  const {state}=await updateState(db,s=>{
++    const now=Date.now();
++    const attempts=(s.customerAttempts??={});
++    for(const id of Object.keys(attempts)) if(attempts[id].until<=now) delete attempts[id];
++    if(attempts[bucket]?.count>=max+1) return false;
++    const entry=(attempts[bucket]??={count:0,until:now+15*60*1000});
++    entry.count++;
++  });
++  if(state.customerAttempts[bucket].count>max) return json({error:'Příliš mnoho pokusů. Zkuste to později.'},429);
++}
++const pragueTime=new Intl.DateTimeFormat('sv-SE',{timeZone:'Europe/Prague',dateStyle:'short',timeStyle:'short'});
++function customerRideInput(input){
++  const pickup=customerText(input.pickup,200,true),dropoff=customerText(input.dropoff,200,true);
++  const scheduled=customerText(input.scheduled,16);
++  if(scheduled){
++    const parsed=new Date(scheduled+'Z');
++    if(!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(scheduled)||!Number.isFinite(+parsed)||
++       parsed.toISOString().slice(0,16)!==scheduled||
++       ![1,2].some(offset=>pragueTime.format(+parsed-offset*3600000).replace(' ','T')===scheduled)||
++       scheduled<=pragueTime.format(Date.now()).replace(' ','T')) throw Error('Zvolte platný budoucí čas v Česku.');
++  }
++  const {payment,requestId,pickupPoint,target}=input;
++  if(!['cash','card'].includes(payment)||typeof requestId!=='string'||!/^[a-f0-9-]{36}$/.test(requestId)) throw Error('Zkontrolujte způsob platby.');
++  if([pickupPoint,target].some(point=>point!=null&&!validPoint(point))) throw Error('Neplatná poloha na mapě.');
++  const point=value=>value==null?undefined:{lat:value.lat,lng:value.lng};
++  return {pickup,dropoff,scheduled,payment,requestId,pickupPoint:point(pickupPoint),target:point(target)};
++}
++const customerRide=({id,pickup,dropoff,scheduled,payment,created,done,status,confirmedAt,cents})=>({
++  id,pickup,dropoff,scheduled,payment,created,done,
++  status:status==='waiting'&&confirmedAt?'confirmed':status,cents:status==='done'?cents:null
++});
++async function customerApi(request,env,action){
++  const db=env.DB,method=request.method;
++  const post=method==='POST';
++  const token=request.headers.get('Cookie')?.match(/(?:^|;\s*)startaxi_customer=([a-f0-9]{64})(?:;|$)/)?.[1];
++  if(post&&['register','login'].includes(action)){
++    const input=await decode(request);
++    const username=customerUsername(input.username);
++    const source=request.headers.get('X-Startaxi-Client')||request.headers.get('CF-Connecting-IP')||'local';
++    const limited=await customerThrottle(db,action+'-source',source,action==='register'?8:35);
++    if(limited) return limited;
++    const secret=customerSecret(),digest=await customerSessionHash(secret);
++    let account;
++    if(action==='register'){
++      const credentials=await newPassword(input.password);
++      const firstName=customerText(input.firstName,60,true),lastName=customerText(input.lastName,60,true);
++      account={id:crypto.randomUUID(),firstName,lastName,username,...customerContact(input),...credentials};
++      await updateState(db,state=>{
++        customerUnique(state,username);
++        (state.customerAccounts??={})[account.id]=account;
++        addCustomerSession(state,digest,account.id);
++      });
++    }else{
++      const limited=await customerThrottle(db,'login-user',username,7);
++      if(limited) return limited;
++      const loginBucket=await hash('login-user:'+username);
++      const {state}=await read(db);
++      account=Object.values(state.customerAccounts||{}).find(value=>value.username===username);
++      const password=input.password;
++      if(typeof password!=='string'||password.length>128) throw Error('Neplatné přihlašovací údaje.');
++      const verified=await passwordHash(password,account?.salt||'startaxi-customer-unknown-account');
++      if(!account||verified!==account.digest) return json({error:'Nesprávné přihlašovací jméno nebo heslo.'},401);
++      await updateState(db,s=>{
++        const current=s.customerAccounts?.[account.id];
++        if(current?.digest!==verified||current.username!==username) throw Error('Přihlaste se znovu.');
++        delete s.customerAttempts[loginBucket];
++        addCustomerSession(s,digest,account.id);
++      });
++    }
++    return json(customerProfile(account),action==='register'?201:200,{'Set-Cookie':customerCookie(secret,customerSessionSeconds)});
++  }
++  if(!token){
++    if(post&&action==='logout') return json({ok:true},200,{'Set-Cookie':customerCookie('',0)});
++    return json({error:'Přihlaste se.'},401);
++  }
++  const digest=await customerSessionHash(token);
++  const {state}=await read(db);
++  const active=state.customerSessions?.[digest];
++  const account=active?.expires>Date.now()?state.customerAccounts?.[active.id]:null;
++  const check=s=>{
++    const entry=s.customerSessions?.[digest];
++    if(!entry||entry.expires<=Date.now()||entry.id!==account.id) throw Error('Přihlaste se znovu.');
++    return s.customerAccounts[account.id];
++  };
++  if(post&&action==='logout'){
++    if(active) await updateState(db,s=>{delete s.customerSessions[digest];});
++    return json({ok:true},200,{'Set-Cookie':customerCookie('',0)});
++  }
++  if(!account) return json({error:'Přihlaste se.'},401);
++  if(method==='GET'&&action==='profile') return json(customerProfile(account));
++  if(method==='GET'&&action==='info') return json(state.customerSettings||{});
++  if(method==='GET'&&action==='rides') return json(state.jobs.filter(job=>job.customerId===account.id).map(customerRide));
++  if(post&&['geocode','reverse-geocode'].includes(action)){
++    const limited=await customerThrottle(db,'geocode',account.id,180);
++    return limited||geocode(request,action);
++  }
++  if(post&&action==='profile'){
++    const input=await decode(request);
++    const limited=await customerThrottle(db,'profile',account.id,10);
++    if(limited) return limited;
++    if(!validPassword(input.currentPassword)||await passwordHash(input.currentPassword,account.salt)!==account.digest){
++      throw Error('Stávající heslo nesouhlasí.');
++    }
++    const fields={username:customerUsername(input.username),...customerContact(input)};
++    const credentials=input.newPassword?await newPassword(input.newPassword):{};
++    const {state:updated}=await updateState(db,s=>{
++      const current=check(s);
++      if(current.digest!==account.digest) throw Error('Přihlaste se znovu.');
++      customerUnique(s,fields.username,account.id);
++      Object.assign(current,fields,credentials);
++      if(credentials.digest){
++        for(const [key,entry] of Object.entries(s.customerSessions)) if(key!==digest&&entry.id===account.id) delete s.customerSessions[key];
++      }
++    });
++    return json(customerProfile(updated.customerAccounts[account.id]));
++  }
++  if(post&&action==='rides'){
++    const input=await decode(request);
++    const {state:updated}=await updateState(db,s=>{
++      const current=check(s);
++      if(s.jobs.some(job=>job.customerId===current.id&&job.requestId===input.requestId)) return false;
++      const ride=customerRideInput(input);
++      const pending=s.jobs.filter(job=>job.customerId===current.id&&['waiting','assigned','accepted','onboard'].includes(job.status));
++      if(pending.length>=5) throw Error('Máte příliš mnoho otevřených objednávek.');
++      const now=Date.now();
++      s.jobs.unshift({
++        ...ride,id:++s.seq,customerId:current.id,name:current.firstName+' '+current.lastName,
++        phone:current.phone,note:'Zákaznická objednávka',
++        created:now,status:'waiting',cents:0,priceSet:false
++      });
++      record(s,'customer','create',s.seq);
++    });
++    return json(customerRide(updated.jobs.find(job=>job.customerId===account.id&&job.requestId===input.requestId)),201);
++  }
++  return json({error:'Stránka neexistuje.'},404);
++}
+diff --git a/server.mjs b/server.mjs
+index 875e904..727c490 100644
+--- a/server.mjs
++++ b/server.mjs
+@@ -1,14 +1,19 @@
+ import {createServer} from 'node:http';
+ import {DatabaseSync} from 'node:sqlite';
+ import {readFileSync} from 'node:fs';
+-import pg from 'pg';
+ import worker from './dist/server/index.js';
+ 
+ function sqliteStore(){
+   const sqlite=new DatabaseSync(process.env.TAXI_DB_PATH||'taxi.sqlite');
+   sqlite.exec('PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;');
+   if(!sqlite.prepare("SELECT name FROM sqlite_master WHERE name='dispatch'").get()){
+-    sqlite.exec(readFileSync(new URL('./migrations/0000_dispatch.sql',import.meta.url),'utf8'));
++    try{
++      sqlite.exec(readFileSync(new URL('./migrations/0000_dispatch.sql',import.meta.url),'utf8'));
++    }catch(error){
++      if(error.code!=='ENOENT') throw error;
++      sqlite.exec('CREATE TABLE IF NOT EXISTS dispatch (id INTEGER PRIMARY KEY CHECK (id=1), revision INTEGER NOT NULL, data TEXT NOT NULL)');
++      sqlite.prepare('INSERT OR IGNORE INTO dispatch (id, revision, data) VALUES (1, 0, ?)').run(JSON.stringify({jobs:[],positions:{},shifts:[],seq:1000}));
++    }
+   }
+   return {
+     prepare(sql){
+@@ -18,7 +23,8 @@ function sqliteStore(){
+   };
+ }
+ 
+-function postgresStore(connectionString){
++async function postgresStore(connectionString){
++  const {default:pg}=await import('pg');
+   const pool=new pg.Pool({connectionString,connectionTimeoutMillis:5000,max:5});
+   pool.on('error',()=>console.error('Připojení k databázi bylo přerušeno.'));
+   async function query(text,values){
+@@ -45,7 +51,7 @@ function postgresStore(connectionString){
+ if(process.env.RENDER==='true'&&!process.env.DATABASE_URL){
+   throw Error('Pro nasazení je potřeba nastavit DATABASE_URL.');
+ }
+-const DB=process.env.DATABASE_URL?postgresStore(process.env.DATABASE_URL):sqliteStore();
++const DB=process.env.DATABASE_URL?await postgresStore(process.env.DATABASE_URL):sqliteStore();
+ const port=Number(process.env.PORT||3000);
+ createServer(async (req,res)=>{
+   try{
+@@ -64,7 +70,12 @@ createServer(async (req,res)=>{
+     }
+     const scheme=process.env.TAXI_PROXY_HTTPS==='1'?'https':'http';
+     const url=new URL(req.url,scheme+'://'+req.headers.host);
+-    const response=await worker.fetch(new Request(url,{method:req.method,headers:req.headers,body:length?Buffer.concat(chunks):undefined}),{DB,TAXI_ACCESS_KEYS:process.env.TAXI_ACCESS_KEYS,TAXI_OWNER_KEY:process.env.TAXI_OWNER_KEY,TAXI_OWNER_PASSWORD:process.env.TAXI_OWNER_PASSWORD,TAXI_PUSH_VAPID_JWK:process.env.TAXI_PUSH_VAPID_JWK,TAXI_PUSH_CONTACT:process.env.TAXI_PUSH_CONTACT});
++    const headers=new Headers(req.headers);
++    const client=req.socket.remoteAddress||'local';
++    // Render appends the address observed at its edge to X-Forwarded-For.
++    headers.set('X-Startaxi-Client',process.env.RENDER==='true'?(headers.get('X-Forwarded-For')?.split(',').at(-1)?.trim()||client):client);
++    headers.delete('CF-Connecting-IP');
++    const response=await worker.fetch(new Request(url,{method:req.method,headers,body:length?Buffer.concat(chunks):undefined}),{DB,TAXI_ACCESS_KEYS:process.env.TAXI_ACCESS_KEYS,TAXI_OWNER_KEY:process.env.TAXI_OWNER_KEY,TAXI_OWNER_PASSWORD:process.env.TAXI_OWNER_PASSWORD,TAXI_PUSH_VAPID_JWK:process.env.TAXI_PUSH_VAPID_JWK,TAXI_PUSH_CONTACT:process.env.TAXI_PUSH_CONTACT});
+     res.writeHead(response.status,Object.fromEntries(response.headers));
+     res.end(Buffer.from(await response.arrayBuffer()));
+   }catch{
+diff --git a/worker.js b/worker.js
+index e5536fd..06fae1b 100644
+--- a/worker.js
++++ b/worker.js
+@@ -138,7 +138,7 @@ function view(state,actor,revision,users){
+       ? can('history')&&(allHistory||job.driver===actor)
+       : ['waiting','assigned','accepted','onboard'].includes(job.status)&&can('dispatchJobs')
+         || job.status!=='cancelled'&&can('driverRide')&&job.driver===actor)
+-      .map(({requestId,createdBy,...job})=>job),
++      .map(({requestId,createdBy,customerId,...job})=>job),
+     shiftOpen:can('gps')&&Boolean(state.openShifts?.[actor]??state.jobs.some(job=>job.driver===actor&&
+       (['assigned','accepted','onboard'].includes(job.status)||job.status==='done'&&!job.shift))),
+     positions,
+@@ -155,6 +155,7 @@ function view(state,actor,revision,users){
+   permitted.removedDriverNames=Object.fromEntries([...historyDrivers]
+     .filter(id=>id&&state.removedUsers?.[id]).map(id=>[id,state.removedUsers[id]]));
+   if(isOwner(actor)){
++    permitted.customerSettings=state.customerSettings||{};
+     permitted.activity=state.activity||[];
+     permitted.driverActivity=state.driverActivity||{};
+     permitted.owners=ownerDirectory(state,users);
+@@ -323,9 +324,62 @@ async function sendRidePush(env,state,driver){
+     for(const [id,value] of expired) if(s.pushEndpoints?.[id]===value) delete s.pushEndpoints[id];
+   });
+ }
++async function geocode(request,path){
++  const body=await decode(request);
++  if(path==='reverse-geocode'){
++    const {point}=body;
++    if(!validPoint(point)) return json({error:'Neplatné souřadnice adresy.'},400);
++    const endpoint=new URL('https://photon.komoot.io/reverse');
++    endpoint.search=new URLSearchParams({
++      lat:String(point.lat), lon:String(point.lng), radius:'0.1', layer:'house', limit:'10'
++    });
++    try{
++      const response=await fetch(endpoint,{signal:AbortSignal.timeout(6000)});
++      if(!response.ok) throw Error('Photon lookup failed');
++      const {features}=await response.json();
++      let closest=null, distance=100;
++      for(const feature of features){
++        const match=houseAddress(feature);
++        if(!match) continue;
++        const gap=meters(point,match.point);
++        if(gap>distance) continue;
++        closest=match;
++        distance=gap;
++      }
++      return json({address:closest?.address??null});
++    }catch{
++      return json({error:'Vyhledávání adres je dočasně nedostupné.'},503);
++    }
++  }
++  const {address}=body;
++  if(typeof address!=='string'||address.trim().length<3||address.length>200) return json({suggestions:[]});
++  try{
++    const suggestions=await liberecAddresses(address.trim());
++    if(suggestions.length) return json({suggestions});
++  }catch{/* Photon remains available when RÚIAN cannot be reached. */}
++  const endpoint=new URL('https://photon.komoot.io/api/');
++  endpoint.search=new URLSearchParams({
++    q:address.trim(), lat:'50.7695', lon:'15.0514', countrycode:'CZ', limit:'15'
++  });
++  endpoint.searchParams.append('layer','house');
++  try{
++    const response=await fetch(endpoint,{signal:AbortSignal.timeout(6000)});
++    if(!response.ok) throw Error('Photon lookup failed');
++    const result=await response.json();
++    const houses=new Map();
++    for(const feature of result.features){
++      const match=houseAddress(feature);
++      if(match&&!houses.has(match.address)) houses.set(match.address,match);
++    }
++    return json({suggestions:[...houses.values()].slice(0,8)});
++  }catch{
++    return json({error:'Vyhledávání adres je dočasně nedostupné.'},503);
++  }
++}
+ async function handleApi(request,env,path){
+   const origin=request.headers.get('Origin');
+   if(request.method==='POST'&&origin&&origin!==new URL(request.url).origin) return json({error:'Přístup zamítnut.'},403);
++  if(path.startsWith('customer/')) return customerApi(request,env,path.slice(9));
+   const users=accounts(env);
+   const token=request.headers.get('Cookie')?.match(/(?:^|;\s*)taxi_session=([a-f0-9]{64})(?:;|$)/)?.[1];
+   if(path==='login'&&request.method==='POST'){
+@@ -416,6 +470,16 @@ async function handleApi(request,env,path){
+       return json({ok:true});
+     }
+   }
++  if(path==='customer-settings'&&request.method==='POST'){
++    if(!isOwner(actor)) throw new AccessDenied('Přístup zamítnut.');
++    const input=await decode(request);
++    const settings=customerSettings(input);
++    const {state,revision}=await updateState(env.DB,s=>{
++      checkSession(s);
++      s.customerSettings=settings;
++    });
++    return json(view(state,actor,revision,users));
++  }
+   if(path==='state'&&request.method==='GET'){
+     if(active.expires<Date.now()+(sessionSeconds-7*86400)*1000){
+       const {state,revision}=await updateState(env.DB,s=>{
+@@ -590,56 +654,7 @@ async function handleApi(request,env,path){
+   if(['geocode','reverse-geocode'].includes(path)&&request.method==='POST'){
+     const permissions=permissionsFor(current.state,actor);
+     if(!['create','edit','ownRide'].some(key=>allows(permissions,key))) return json({error:'Přístup zamítnut.'},403);
+-    const body=await decode(request);
+-    if(path==='reverse-geocode'){
+-      const {point}=body;
+-      if(!validPoint(point)) return json({error:'Neplatné souřadnice adresy.'},400);
+-      const endpoint=new URL('https://photon.komoot.io/reverse');
+-      endpoint.search=new URLSearchParams({
+-        lat:String(point.lat), lon:String(point.lng), radius:'0.1', layer:'house', limit:'10'
+-      });
+-      try{
+-        const response=await fetch(endpoint,{signal:AbortSignal.timeout(6000)});
+-        if(!response.ok) throw Error('Photon lookup failed');
+-        const {features}=await response.json();
+-        let closest=null, distance=100;
+-        for(const feature of features){
+-          const match=houseAddress(feature);
+-          if(!match) continue;
+-          const gap=meters(point,match.point);
+-          if(gap>distance) continue;
+-          closest=match;
+-          distance=gap;
+-        }
+-        return json({address:closest?.address??null});
+-      }catch{
+-        return json({error:'Vyhledávání adres je dočasně nedostupné.'},503);
+-      }
+-    }
+-    const {address}=body;
+-    if(typeof address!=='string'||address.trim().length<3||address.length>200) return json({suggestions:[]});
+-    try{
+-      const suggestions=await liberecAddresses(address.trim());
+-      if(suggestions.length) return json({suggestions});
+-    }catch{/* Photon remains available when RÚIAN cannot be reached. */}
+-    const endpoint=new URL('https://photon.komoot.io/api/');
+-    endpoint.search=new URLSearchParams({
+-      q:address.trim(), lat:'50.7695', lon:'15.0514', countrycode:'CZ', limit:'15'
+-    });
+-    endpoint.searchParams.append('layer','house');
+-    try{
+-      const response=await fetch(endpoint,{signal:AbortSignal.timeout(6000)});
+-      if(!response.ok) throw Error('Photon lookup failed');
+-      const result=await response.json();
+-      const houses=new Map();
+-      for(const feature of result.features){
+-        const match=houseAddress(feature);
+-        if(match&&!houses.has(match.address)) houses.set(match.address,match);
+-      }
+-      return json({suggestions:[...houses.values()].slice(0,8)});
+-    }catch{
+-      return json({error:'Vyhledávání adres je dočasně nedostupné.'},503);
+-    }
++    return geocode(request,path);
+   }
+   if(path==='action'&&request.method==='POST'){
+     const action=await decode(request);
+@@ -661,6 +676,14 @@ async function handleApi(request,env,path){
+       }
+       if(Object.hasOwn(actionPermissions,action.type)&&!allows(permissionsFor(s,actor),actionPermissions[action.type])) throw new AccessDenied('Přístup zamítnut.');
+       if(action.type==='gps'&&s.openShifts?.[actor]===false) throw Error('Nejdříve zahajte směnu.');
++      if(action.type==='confirmCustomerRide'){
++        if(!allows(permissionsFor(s,actor),'edit')) throw new AccessDenied('Přístup zamítnut.');
++        const ride=s.jobs.find(job=>job.id===action.id&&job.customerId);
++        if(ride?.status!=='waiting') throw Error('Zakázku už nelze potvrdit.');
++        if(ride.confirmedAt) return false;
++        ride.confirmedAt=now;
++        return;
++      }
+       if(action.type==='assign'&&!activePosition(s,action.driver,Date.now())) throw Error('Řidič nesdílí aktuální polohu.');
+       const previous=s.positions[actor];
+       if(change(s,actor,action,now)===false) return false;
+@@ -698,7 +721,8 @@ export default {
+       try{return await handleApi(request,env,path.slice(5));}
+       catch(error){return json({error:error instanceof SyntaxError?'Neplatný požadavek.':error.message},error instanceof AccessDenied?403:400);}
+     }
+-    const asset=assets[path==='/'?'/index.html':path];
++    if(path==='/customer') return Response.redirect(new URL('/customer/',request.url),308);
++    const asset=assets[path==='/'?'/index.html':path==='/customer/'?'/customer/index.html':path];
+     if(!Array.isArray(asset)) return new Response('Nenalezeno',{status:404});
+     return new Response(asset[2]?Uint8Array.from(atob(asset[1]),char=>char.charCodeAt(0)):asset[1],{headers:{'Content-Type':asset[0],'X-Content-Type-Options':'nosniff'}});
+   }
