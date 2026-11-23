@@ -25,7 +25,18 @@ function sqliteStore(){
 
 async function postgresStore(connectionString){
   const {default:pg}=await import('pg');
-  const pool=new pg.Pool({connectionString,connectionTimeoutMillis:5000,max:5});
+  const config={connectionString,connectionTimeoutMillis:5000,max:5};
+  const ca=process.env.TAXI_DATABASE_CA?.trim();
+  if(ca){
+    const url=new URL(connectionString);
+    // node-postgres gives URL TLS parameters precedence over the ssl object.
+    for(const key of ['ssl','sslmode','sslrootcert','sslcert','sslkey']){
+      url.searchParams.delete(key);
+    }
+    config.connectionString=url.toString();
+    config.ssl={ca,rejectUnauthorized:true};
+  }
+  const pool=new pg.Pool(config);
   pool.on('error',()=>console.error('Připojení k databázi bylo přerušeno.'));
   async function query(text,values){
     try{
