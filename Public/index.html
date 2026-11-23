@@ -31,6 +31,17 @@
 </section>
 <section id="activity" hidden></section>
 <section id="settings" class="drivergrid" hidden>
+  <section id="customer-settings" class="panel detail" hidden>
+    <h2>Zákaznická aplikace</h2>
+    <p><a href="/customer/" target="_blank" rel="noopener">Otevřít objednávky pro zákazníky</a></p>
+    <form id="customer-settings-form">
+      <label>Telefon na dispečink<input name="phone" type="tel" maxlength="32"></label>
+      <label>Kontaktní e-mail<input name="email" type="email" maxlength="254"></label>
+      <label>Provozní doba<input name="hours" maxlength="200"></label>
+      <label>Akce a kupóny (jedna položka na řádek)<textarea name="offers" maxlength="2000" rows="4"></textarea></label>
+      <button class="primary" type="submit">Uložit nastavení pro zákazníky</button>
+    </form>
+  </section>
   <section class="panel detail">
     <h2>Můj profil</h2><p id="profile-vehicle" hidden></p>
     <form id="profile-form">

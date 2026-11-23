@@ -138,7 +138,7 @@ function view(state,actor,revision,users){
       ? can('history')&&(allHistory||job.driver===actor)
       : ['waiting','assigned','accepted','onboard'].includes(job.status)&&can('dispatchJobs')
         || job.status!=='cancelled'&&can('driverRide')&&job.driver===actor)
-      .map(({requestId,createdBy,...job})=>job),
+      .map(({requestId,createdBy,customerId,...job})=>job),
     shiftOpen:can('gps')&&Boolean(state.openShifts?.[actor]??state.jobs.some(job=>job.driver===actor&&
       (['assigned','accepted','onboard'].includes(job.status)||job.status==='done'&&!job.shift))),
     positions,
@@ -155,6 +155,7 @@ function view(state,actor,revision,users){
   permitted.removedDriverNames=Object.fromEntries([...historyDrivers]
     .filter(id=>id&&state.removedUsers?.[id]).map(id=>[id,state.removedUsers[id]]));
   if(isOwner(actor)){
+    permitted.customerSettings=state.customerSettings||{};
     permitted.activity=state.activity||[];
     permitted.driverActivity=state.driverActivity||{};
     permitted.owners=ownerDirectory(state,users);
@@ -323,9 +324,62 @@ async function sendRidePush(env,state,driver){
     for(const [id,value] of expired) if(s.pushEndpoints?.[id]===value) delete s.pushEndpoints[id];
   });
 }
+async function geocode(request,path){
+  const body=await decode(request);
+  if(path==='reverse-geocode'){
+    const {point}=body;
+    if(!validPoint(point)) return json({error:'Neplatné souřadnice adresy.'},400);
+    const endpoint=new URL('https://photon.komoot.io/reverse');
+    endpoint.search=new URLSearchParams({
+      lat:String(point.lat), lon:String(point.lng), radius:'0.1', layer:'house', limit:'10'
+    });
+    try{
+      const response=await fetch(endpoint,{signal:AbortSignal.timeout(6000)});
+      if(!response.ok) throw Error('Photon lookup failed');
+      const {features}=await response.json();
+      let closest=null, distance=100;
+      for(const feature of features){
+        const match=houseAddress(feature);
+        if(!match) continue;
+        const gap=meters(point,match.point);
+        if(gap>distance) continue;
+        closest=match;
+        distance=gap;
+      }
+      return json({address:closest?.address??null});
+    }catch{
+      return json({error:'Vyhledávání adres je dočasně nedostupné.'},503);
+    }
+  }
+  const {address}=body;
+  if(typeof address!=='string'||address.trim().length<3||address.length>200) return json({suggestions:[]});
+  try{
+    const suggestions=await liberecAddresses(address.trim());
+    if(suggestions.length) return json({suggestions});
+  }catch{/* Photon remains available when RÚIAN cannot be reached. */}
+  const endpoint=new URL('https://photon.komoot.io/api/');
+  endpoint.search=new URLSearchParams({
+    q:address.trim(), lat:'50.7695', lon:'15.0514', countrycode:'CZ', limit:'15'
+  });
+  endpoint.searchParams.append('layer','house');
+  try{
+    const response=await fetch(endpoint,{signal:AbortSignal.timeout(6000)});
+    if(!response.ok) throw Error('Photon lookup failed');
+    const result=await response.json();
+    const houses=new Map();
+    for(const feature of result.features){
+      const match=houseAddress(feature);
+      if(match&&!houses.has(match.address)) houses.set(match.address,match);
+    }
+    return json({suggestions:[...houses.values()].slice(0,8)});
+  }catch{
+    return json({error:'Vyhledávání adres je dočasně nedostupné.'},503);
+  }
+}
 async function handleApi(request,env,path){
   const origin=request.headers.get('Origin');
   if(request.method==='POST'&&origin&&origin!==new URL(request.url).origin) return json({error:'Přístup zamítnut.'},403);
+  if(path.startsWith('customer/')) return customerApi(request,env,path.slice(9));
   const users=accounts(env);
   const token=request.headers.get('Cookie')?.match(/(?:^|;\s*)taxi_session=([a-f0-9]{64})(?:;|$)/)?.[1];
   if(path==='login'&&request.method==='POST'){
@@ -415,6 +469,16 @@ async function handleApi(request,env,path){
       });
       return json({ok:true});
     }
+  }
+  if(path==='customer-settings'&&request.method==='POST'){
+    if(!isOwner(actor)) throw new AccessDenied('Přístup zamítnut.');
+    const input=await decode(request);
+    const settings=customerSettings(input);
+    const {state,revision}=await updateState(env.DB,s=>{
+      checkSession(s);
+      s.customerSettings=settings;
+    });
+    return json(view(state,actor,revision,users));
   }
   if(path==='state'&&request.method==='GET'){
     if(active.expires<Date.now()+(sessionSeconds-7*86400)*1000){
@@ -590,56 +654,7 @@ async function handleApi(request,env,path){
   if(['geocode','reverse-geocode'].includes(path)&&request.method==='POST'){
     const permissions=permissionsFor(current.state,actor);
     if(!['create','edit','ownRide'].some(key=>allows(permissions,key))) return json({error:'Přístup zamítnut.'},403);
-    const body=await decode(request);
-    if(path==='reverse-geocode'){
-      const {point}=body;
-      if(!validPoint(point)) return json({error:'Neplatné souřadnice adresy.'},400);
-      const endpoint=new URL('https://photon.komoot.io/reverse');
-      endpoint.search=new URLSearchParams({
-        lat:String(point.lat), lon:String(point.lng), radius:'0.1', layer:'house', limit:'10'
-      });
-      try{
-        const response=await fetch(endpoint,{signal:AbortSignal.timeout(6000)});
-        if(!response.ok) throw Error('Photon lookup failed');
-        const {features}=await response.json();
-        let closest=null, distance=100;
-        for(const feature of features){
-          const match=houseAddress(feature);
-          if(!match) continue;
-          const gap=meters(point,match.point);
-          if(gap>distance) continue;
-          closest=match;
-          distance=gap;
-        }
-        return json({address:closest?.address??null});
-      }catch{
-        return json({error:'Vyhledávání adres je dočasně nedostupné.'},503);
-      }
-    }
-    const {address}=body;
-    if(typeof address!=='string'||address.trim().length<3||address.length>200) return json({suggestions:[]});
-    try{
-      const suggestions=await liberecAddresses(address.trim());
-      if(suggestions.length) return json({suggestions});
-    }catch{/* Photon remains available when RÚIAN cannot be reached. */}
-    const endpoint=new URL('https://photon.komoot.io/api/');
-    endpoint.search=new URLSearchParams({
-      q:address.trim(), lat:'50.7695', lon:'15.0514', countrycode:'CZ', limit:'15'
-    });
-    endpoint.searchParams.append('layer','house');
-    try{
-      const response=await fetch(endpoint,{signal:AbortSignal.timeout(6000)});
-      if(!response.ok) throw Error('Photon lookup failed');
-      const result=await response.json();
-      const houses=new Map();
-      for(const feature of result.features){
-        const match=houseAddress(feature);
-        if(match&&!houses.has(match.address)) houses.set(match.address,match);
-      }
-      return json({suggestions:[...houses.values()].slice(0,8)});
-    }catch{
-      return json({error:'Vyhledávání adres je dočasně nedostupné.'},503);
-    }
+    return geocode(request,path);
   }
   if(path==='action'&&request.method==='POST'){
     const action=await decode(request);
@@ -661,6 +676,14 @@ async function handleApi(request,env,path){
       }
       if(Object.hasOwn(actionPermissions,action.type)&&!allows(permissionsFor(s,actor),actionPermissions[action.type])) throw new AccessDenied('Přístup zamítnut.');
       if(action.type==='gps'&&s.openShifts?.[actor]===false) throw Error('Nejdříve zahajte směnu.');
+      if(action.type==='confirmCustomerRide'){
+        if(!allows(permissionsFor(s,actor),'edit')) throw new AccessDenied('Přístup zamítnut.');
+        const ride=s.jobs.find(job=>job.id===action.id&&job.customerId);
+        if(ride?.status!=='waiting') throw Error('Zakázku už nelze potvrdit.');
+        if(ride.confirmedAt) return false;
+        ride.confirmedAt=now;
+        return;
+      }
       if(action.type==='assign'&&!activePosition(s,action.driver,Date.now())) throw Error('Řidič nesdílí aktuální polohu.');
       const previous=s.positions[actor];
       if(change(s,actor,action,now)===false) return false;
@@ -698,7 +721,8 @@ export default {
       try{return await handleApi(request,env,path.slice(5));}
       catch(error){return json({error:error instanceof SyntaxError?'Neplatný požadavek.':error.message},error instanceof AccessDenied?403:400);}
     }
-    const asset=assets[path==='/'?'/index.html':path];
+    if(path==='/customer') return Response.redirect(new URL('/customer/',request.url),308);
+    const asset=assets[path==='/'?'/index.html':path==='/customer/'?'/customer/index.html':path];
     if(!Array.isArray(asset)) return new Response('Nenalezeno',{status:404});
     return new Response(asset[2]?Uint8Array.from(atob(asset[1]),char=>char.charCodeAt(0)):asset[1],{headers:{'Content-Type':asset[0],'X-Content-Type-Options':'nosniff'}});
   }

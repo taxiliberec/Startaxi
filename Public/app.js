@@ -41,6 +41,17 @@ const canSeePage=key=>({
 const roleLabel=value=>({owner:'Majitel firmy',dispatcher:'Dispečer',driver:'Řidič'})[value];
 const fleetHistory=()=>role!=='driver';
 const driverName=id=>drivers.find(d=>d.id===id)?.name??state?.removedDriverNames?.[id]??'';
+function renderCustomerSettings(){
+ const panel=$('#customer-settings');
+ panel.hidden=!isOwner(actor);
+ if(panel.hidden) return;
+ const form=$('#customer-settings-form');
+ const values=state.customerSettings||{};
+ if(form.dataset.ready===actor) return;
+ form.dataset.ready=actor;
+ for(const name of ['phone','email','hours']) form.elements[name].value=values[name]||'';
+ form.elements.offers.value=(values.offers||[]).join('\n');
+}
 const statusText={waiting:'Čeká',assigned:'Čeká na přijetí',accepted:'K vyzvednutí',onboard:'Se zákazníkem',done:'Dokončeno'};
 let state=null, actor='dispatch', live=false, page='dispatch', queue='waiting', selected='', filter='', reportDate=day(), gps=null, gpsHeartbeat=null, gpsText='', lastGps=0, pending=false, incoming=null, noticeCount=0;
 function notify(msg){
@@ -203,6 +214,8 @@ for(const id of draftForms){
 function lockApp(){
  sessionGeneration++; ridePushEnabled=false; revision=-1; drivers=[]; vehicles=[]; profile=null; state=null; live=false; stopGps();
  for(const form of [$('#booking'),$('#own-ride'),$('#profile-form'),$('#owner-form'),$('#employee-form')]) form.reset();
+ $('#customer-settings-form').reset();
+ delete $('#customer-settings-form').dataset.ready;
  for(const dialog of document.querySelectorAll('dialog[open]')) dialog.close();
  $('#activity').replaceChildren();
  fillDefaultPermissions();
@@ -251,7 +264,7 @@ function render(){
  $('#driver').hidden=page!=='driver';
  $('#activity').hidden=page!=='activity';
  $('#settings').hidden=page!=='settings';
- if(page==='settings'){renderOwners();renderUserSettings();renderFleetSettings();}
+ if(page==='settings'){renderOwners();renderUserSettings();renderFleetSettings();renderCustomerSettings();}
  document.querySelectorAll('[data-permission]').forEach(el=>el.hidden=!can(el.dataset.permission));
  $('#vehicle-status').hidden=page!=='dispatch'||!can('fleetMap');
  $('#driver-map-panel').hidden=!can('gps')&&!can('driverRide');
@@ -467,7 +480,11 @@ function renderQueue(){
  $('#maphint').textContent=selected?driverName(selected)+' · vyberte zakázku':'Vyberte volné vozidlo';
  $('#queue').innerHTML=jobs.map(j=>'<div class="job-card"><details class="job-menu"><summary aria-label="Možnosti zakázky '+j.id+'">⋯</summary><div><button type="button" data-job-edit="cancelJob" data-id="'+j.id+'">Zrušit zakázku</button><button type="button" data-job-edit="editPickupTime" data-id="'+j.id+'">Upravit čas vyzvednutí</button><button type="button" data-job-edit="editJob" data-id="'+j.id+'">Upravit údaje zakázky</button></div></details><button class="job" data-job="'+j.id+'" '+(j.status!=='waiting'||!can('assign')?'disabled':'')+'><div class="jobtop"><b>'+esc(j.name)+'</b><span class="badge">'+statusText[j.status]+'</span></div>'+jobRoute(j)+'<div class="jobfoot"><div class="job-times"><span>Vytvořeno '+jobTime(j.created)+'</span>'+
    (scheduledJob(j)||'<span>Co nejdříve</span>')+(j.driver?'<span>'+esc(driverName(j.driver))+'</span>':'')+
-   '</div><strong>'+cash(j.cents)+'</strong></div></button>'+
+   (j.payment?'<span>Zákaznická objednávka · '+(j.payment==='card'?'Kartou u řidiče':'Hotově')+'</span>':'')+
+   (j.phone?'<span>Tel. '+esc(j.phone)+'</span>':'')+
+   (j.confirmedAt?'<span>Potvrzeno zákazníkovi</span>':'')+
+   '</div><strong>'+(j.payment&&!j.priceSet?'Čeká na cenu':cash(j.cents))+'</strong></div></button>'+
+   (j.status==='waiting'&&j.payment&&!j.confirmedAt&&can('edit')?'<div class="assignment-status"><button type="button" data-confirm-customer="'+j.id+'">Potvrdit zákazníkovi</button></div>':'')+
    (j.status==='assigned'?'<div class="assignment-status"><span data-assignment-countdown="'+j.id+'"></span>'+
      (can('assign')?'<button type="button" data-requeue="'+j.id+'" hidden>Vrátit k přeřazení</button>':'')+'</div>':'')+'</div>').join('')||'<p class="empty">Žádné zakázky</p>';
  updateAssignmentTimers();
@@ -528,7 +545,8 @@ function renderDriver(){
  const gpsStatus=gpsText||(fresh(pos)?'GPS přesnost ±'+Math.round(pos.accuracy)+' m':'Poloha se nesdílí.');
  $('#own-ride fieldset').disabled=Boolean(j);
  $('#own-ride-status').hidden=!j;
- $('#driver-summary').innerHTML='<div class="drivergrid"><div><section class="panel detail ride-panel"><h2>'+(j?.status==='assigned'?'Nová zakázka':'Aktuální zakázka')+'</h2>'+(j?'<p><b>#'+j.id+' · '+esc(j.name)+' · '+cash(j.cents)+'</b></p><p>'+statusText[j.status]+(j.scheduled?' · '+scheduledJob(j):'')+'</p>'+jobRoute(j)+(j.note?'<p>'+esc(j.note)+'</p>':'')+'<div class="ride-actions">'+driverActions(j)+'</div>':'<p>Čekáte na novou zakázku od dispečera.</p>')+
+ $('#driver-summary').innerHTML='<div class="drivergrid"><div><section class="panel detail ride-panel"><h2>'+(j?.status==='assigned'?'Nová zakázka':'Aktuální zakázka')+'</h2>'+(j?'<p><b>#'+j.id+' · '+esc(j.name)+' · '+cash(j.cents)+'</b></p><p>'+statusText[j.status]+(j.scheduled?' · '+scheduledJob(j):'')+'</p>'+jobRoute(j)+(j.payment?'<p>Platba '+(j.payment==='card'?'kartou u řidiče':'hotově')+'</p>':'')+
+   (j.phone?'<p>Tel. '+esc(j.phone)+'</p>':'')+(j.note?'<p>'+esc(j.note)+'</p>':'')+'<div class="ride-actions">'+driverActions(j)+'</div>':'<p>Čekáte na novou zakázku od dispečera.</p>')+
    '<button type="button" class="ride-sound" data-ride-sound>'+(rideAudio?.state==='running'?'Vyzkoušet zvuk':'Zapnout zvuk zakázek')+'</button>'+(nativeLocation?'':'<button type="button" class="ride-sound" data-ride-push>'+
    (ridePushEnabled?'Oznámení jsou zapnutá':'Zapnout oznámení zakázek')+'</button>')+'</section></div><div><section class="panel detail"><h2>Dostupnost</h2><div class="actions"><button data-availability aria-pressed="'+Boolean(state.occupied?.[actor])+'" '+(j?'disabled':'')+'>'+(state.occupied?.[actor]?'Nastavit jako volný':'Nastavit jako obsazený')+'</button></div></section><section class="panel detail"><h2>Sdílení polohy</h2><p>'+esc(gpsStatus)+'</p><div class="actions"><button data-gps>'+ (!gpsRunning()?(state.shiftOpen?'Obnovit GPS':'Zahájit směnu a zapnout GPS'):'Ukončit směnu')+'</button></div></section><section class="panel detail"><h2>Dnešní jízdy</h2><div class="actions"><button data-page="history">Otevřít denní přehled</button></div></section></div></div>';
  const summary=$('#driver-summary');
@@ -1152,7 +1170,7 @@ document.addEventListener('click',async e=>{
    $('#job-edit-title').textContent={cancelJob:'Zrušit zakázku',editPickupTime:'Upravit čas vyzvednutí',editJob:'Upravit údaje zakázky'}[d.jobEdit]+' č. '+job.id;
    $('#job-edit-submit').textContent=editing||timing?'Uložit':'Zrušit zakázku';
    for(const field of ['name','pickup','dropoff','note','scheduled']) form.elements[field].value=job[field]??'';
-   form.elements.price.value=(job.cents/100).toFixed(2);
+   form.elements.price.value=job.payment&&!job.priceSet?'':(job.cents/100).toFixed(2);
    $('#job-editor').showModal();
    return;
  }
@@ -1594,3 +1612,26 @@ document.addEventListener('visibilitychange',()=>{
 
 window.addEventListener('offline',showSync);
 window.addEventListener('online',()=>{showSync();if(live) void poll(); else void restoreSession();});
+
+$('#customer-settings-form').addEventListener('submit',async event=>{
+ event.preventDefault();
+ const form=event.currentTarget;
+ const button=form.querySelector('button');
+ button.disabled=true;
+ try{
+   const result=await api('customer-settings',Object.fromEntries(new FormData(form)));
+   form.dataset.ready='';
+   receive(result);
+   renderCustomerSettings();
+   notify('Nastavení pro zákazníky bylo uloženo.');
+ }catch(error){notify(error.message);}
+ finally{button.disabled=false;}
+});
+$('#queue').addEventListener('click',async event=>{
+ const button=event.target.closest('[data-confirm-customer]');
+ if(!button) return;
+ button.disabled=true;
+ try{
+   if(await perform({type:'confirmCustomerRide',id:Number(button.dataset.confirmCustomer)})) notify('Objednávka byla potvrzena.');
+ }finally{button.disabled=false;}
+});
