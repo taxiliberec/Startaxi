@@ -60,6 +60,11 @@ createServer(async (req,res)=>{
       res.writeHead(200,{'Cache-Control':'no-store'}).end('OK');
       return;
     }
+    if(process.env.TAXI_CUSTOMER_HOMEPAGE==='1'&&(req.method==='GET'||req.method==='HEAD')&&req.url?.split('?')[0]==='/'){
+      const query=req.url.slice(1);
+      res.writeHead(302,{'Location':'/customer/'+query,'Cache-Control':'no-store'}).end();
+      return;
+    }
     const bodyLimit=req.method==='POST'&&req.url==='/api/vehicles'?120000:16000;
     const chunks=[];
     let length=0;
