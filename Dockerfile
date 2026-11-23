@@ -2,7 +2,7 @@ FROM node:24-bookworm-slim
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
-COPY build.mjs server.mjs worker.js ./
+COPY build.mjs server.mjs worker.js customer-api.js ./
 COPY Public/ ./public/
 COPY Migrations/ ./migrations/
 RUN npm run build

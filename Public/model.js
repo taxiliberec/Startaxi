@@ -120,6 +120,7 @@ export function change(s,actor,a,now=Date.now()){
         requireThat([target,pickupPoint].every(p=>p==null||validPoint(p)),'Neplatné souřadnice adresy.');
         requireThat(pickup.trim()===job.pickup||validPoint(pickupPoint),'Vyberte adresu vyzvednutí se souřadnicemi.');
         requireThat(dropoff.trim()===job.dropoff||validPoint(target),'Vyberte adresu doručení se souřadnicemi.');
+        if(job.customerId) job.priceSet=true;
         Object.assign(job,{name:name.trim(),pickup:pickup.trim(),dropoff:dropoff.trim(),note,cents,
           pickupPoint:pickup.trim()===job.pickup?(pickupPoint??job.pickupPoint):pickupPoint,
           target:dropoff.trim()===job.dropoff?(target??job.target):target});
@@ -134,6 +135,7 @@ export function change(s,actor,a,now=Date.now()){
       break;
     case 'assign':
       requireThat(job?.status==='waiting'&&fleet(s).some(d=>d.id===a.driver)&&allows(permissionsFor(s,a.driver),'driverRide')&&!busy(s,a.driver)&&!s.occupied?.[a.driver],'Řidič nebo zakázka už nejsou k dispozici.');
+      requireThat(!job.customerId||job.priceSet,'Nejdříve uložte cenu v úpravě zakázky.');
       Object.assign(job,{driver:a.driver,status:'assigned',assignedAt:now});
       break;
     case 'requeue':

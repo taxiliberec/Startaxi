@@ -41,6 +41,46 @@ const canSeePage=key=>({
 const roleLabel=value=>({owner:'Majitel firmy',dispatcher:'Dispečer',driver:'Řidič'})[value];
 const fleetHistory=()=>role!=='driver';
 const driverName=id=>drivers.find(d=>d.id===id)?.name??state?.removedDriverNames?.[id]??'';
+function addLoyaltyReward(reward={}){
+ const container=$('#loyalty-rewards');
+ if(container.children.length>=10) return;
+ const row=document.createElement('fieldset');
+ row.className='loyalty-reward';
+ row.innerHTML='<legend>Odměna</legend><label>Název<input name="rewardName" maxlength="60" required></label>'+
+  '<label>Hranice podle<select name="rewardUnit"><option value="points">Bodů</option><option value="rides">Dokončených jízd</option></select></label>'+
+  '<label>Počet<input name="rewardThreshold" type="number" min="1" max="10000" step="1" required></label>'+
+  '<label>Sleva (Kč)<input name="rewardDiscount" type="number" min="1" max="10000" step="1" required></label>'+
+  '<button type="button">Odebrat odměnu</button>';
+ row.querySelector('[name=rewardName]').value=reward.name??'';
+ row.querySelector('[name=rewardUnit]').value=reward.unit??'points';
+ row.querySelector('[name=rewardThreshold]').value=reward.threshold??'';
+ row.querySelector('[name=rewardDiscount]').value=reward.discount??'';
+ row.querySelector('button').addEventListener('click',()=>{
+   row.remove();
+   $('#add-loyalty-reward').disabled=false;
+ });
+ container.append(row);
+ $('#add-loyalty-reward').disabled=container.children.length>=10;
+}
+function renderCustomerSettings(){
+ const panel=$('#customer-settings');
+ panel.hidden=!isOwner(actor);
+ if(panel.hidden) return;
+ const form=$('#customer-settings-form');
+ const values=state.customerSettings||{};
+ if(form.dataset.ready===actor) return;
+ form.dataset.ready=actor;
+ for(const name of ['phone','email','hours']) form.elements[name].value=values[name]||'';
+ form.elements.offers.value=(values.offers||[]).join('\n');
+ form.elements.fareMode.value=values.fareMode??'automatic';
+ form.elements.fixedFare.value=values.fixedFare??'';
+ form.elements.fareMode.dispatchEvent(new Event('change'));
+ form.elements.loyaltyEnabled.checked=values.loyalty?.enabled===true;
+ form.elements.pointsPerRide.value=values.loyalty?.pointsPerRide??1;
+ $('#loyalty-rewards').replaceChildren();
+ $('#add-loyalty-reward').disabled=false;
+ for(const reward of values.loyalty?.rewards??[]) addLoyaltyReward(reward);
+}
 const statusText={waiting:'Čeká',assigned:'Čeká na přijetí',accepted:'K vyzvednutí',onboard:'Se zákazníkem',done:'Dokončeno'};
 let state=null, actor='dispatch', live=false, page='dispatch', queue='waiting', selected='', filter='', reportDate=day(), gps=null, gpsHeartbeat=null, gpsText='', lastGps=0, pending=false, incoming=null, noticeCount=0;
 function notify(msg){
@@ -203,6 +243,8 @@ for(const id of draftForms){
 function lockApp(){
  sessionGeneration++; ridePushEnabled=false; revision=-1; drivers=[]; vehicles=[]; profile=null; state=null; live=false; stopGps();
  for(const form of [$('#booking'),$('#own-ride'),$('#profile-form'),$('#owner-form'),$('#employee-form')]) form.reset();
+ $('#customer-settings-form').reset();
+ delete $('#customer-settings-form').dataset.ready;
  for(const dialog of document.querySelectorAll('dialog[open]')) dialog.close();
  $('#activity').replaceChildren();
  fillDefaultPermissions();
@@ -251,7 +293,7 @@ function render(){
  $('#driver').hidden=page!=='driver';
  $('#activity').hidden=page!=='activity';
  $('#settings').hidden=page!=='settings';
- if(page==='settings'){renderOwners();renderUserSettings();renderFleetSettings();}
+ if(page==='settings'){renderOwners();renderUserSettings();renderFleetSettings();renderCustomerSettings();}
  document.querySelectorAll('[data-permission]').forEach(el=>el.hidden=!can(el.dataset.permission));
  $('#vehicle-status').hidden=page!=='dispatch'||!can('fleetMap');
  $('#driver-map-panel').hidden=!can('gps')&&!can('driverRide');
@@ -412,7 +454,7 @@ function refreshDriverStats(){
  table.innerHTML=driverStatsRows();
 }
 function renderOwnerHistory(open){
- const labels={userRenamed:'Upraveno jméno uživatele',userRemoved:'Odstraněn uživatel',vehicleRemoved:'Odstraněno vozidlo',employeeCreated:'Vytvořen účet zaměstnance',employeePermissions:'Změněna oprávnění zaměstnance',ownerCreated:'Vytvořen účet majitele',driver:'Vytvořen účet řidiče',create:'Vytvořena zakázka',createOwn:'Vytvořena vlastní zakázka',cancelJob:'Zakázka zrušena',editPickupTime:'Upraven čas vyzvednutí',editJob:'Upraveny údaje zakázky',assign:'Přiřazena zakázka',accept:'Přijata zakázka',pickup:'Vyzvednut zákazník',complete:'Dokončena jízda',close:'Uzavřena směna'};
+ const labels={userRenamed:'Upraveno jméno uživatele',userRemoved:'Odstraněn uživatel',vehicleRemoved:'Odstraněno vozidlo',employeeCreated:'Vytvořen účet zaměstnance',employeePermissions:'Změněna oprávnění zaměstnance',ownerCreated:'Vytvořen účet majitele',driver:'Vytvořen účet řidiče',create:'Vytvořena zakázka',createOwn:'Vytvořena vlastní zakázka',cancelJob:'Zakázka zrušena',confirmCustomerRide:'Zákaznická objednávka potvrzena',rejectCustomerRide:'Zákaznická objednávka odmítnuta',editPickupTime:'Upraven čas vyzvednutí',editJob:'Upraveny údaje zakázky',assign:'Přiřazena zakázka',accept:'Přijata zakázka',pickup:'Vyzvednut zákazník',complete:'Dokončena jízda',close:'Uzavřena směna'};
  const date=ownerFilters.activityDate;
  const entries=(state.activity??[]).filter(entry=>Number.isFinite(entry.time)&&day(entry.time)===date);
  const rows=entries.map(entry=>{
@@ -467,7 +509,15 @@ function renderQueue(){
  $('#maphint').textContent=selected?driverName(selected)+' · vyberte zakázku':'Vyberte volné vozidlo';
  $('#queue').innerHTML=jobs.map(j=>'<div class="job-card"><details class="job-menu"><summary aria-label="Možnosti zakázky '+j.id+'">⋯</summary><div><button type="button" data-job-edit="cancelJob" data-id="'+j.id+'">Zrušit zakázku</button><button type="button" data-job-edit="editPickupTime" data-id="'+j.id+'">Upravit čas vyzvednutí</button><button type="button" data-job-edit="editJob" data-id="'+j.id+'">Upravit údaje zakázky</button></div></details><button class="job" data-job="'+j.id+'" '+(j.status!=='waiting'||!can('assign')?'disabled':'')+'><div class="jobtop"><b>'+esc(j.name)+'</b><span class="badge">'+statusText[j.status]+'</span></div>'+jobRoute(j)+'<div class="jobfoot"><div class="job-times"><span>Vytvořeno '+jobTime(j.created)+'</span>'+
    (scheduledJob(j)||'<span>Co nejdříve</span>')+(j.driver?'<span>'+esc(driverName(j.driver))+'</span>':'')+
-   '</div><strong>'+cash(j.cents)+'</strong></div></button>'+
+   (j.payment?'<span>Zákaznická objednávka · '+(j.payment==='card'?'Kartou u řidiče':'Hotově')+'</span>':'')+
+   (j.phone?'<span>Tel. '+esc(j.phone)+'</span>':'')+
+   (j.confirmedAt?'<span>Potvrzeno zákazníkovi</span>':'')+
+   '</div><strong>'+(j.payment&&!j.priceSet?'Čeká na cenu':cash(j.cents))+'</strong></div></button>'+
+   (j.status==='waiting'&&j.customerOrder&&!j.confirmedAt&&(can('edit')||can('cancel'))
+     ?'<div class="assignment-status">'+
+       (can('edit')?'<button type="button" data-customer-decision="confirmCustomerRide" data-id="'+j.id+'">Potvrdit objednávku</button>':'')+
+       (can('cancel')?'<button type="button" data-customer-decision="rejectCustomerRide" data-id="'+j.id+'">Odmítnout objednávku</button>':'')+
+       '</div>':'')+
    (j.status==='assigned'?'<div class="assignment-status"><span data-assignment-countdown="'+j.id+'"></span>'+
      (can('assign')?'<button type="button" data-requeue="'+j.id+'" hidden>Vrátit k přeřazení</button>':'')+'</div>':'')+'</div>').join('')||'<p class="empty">Žádné zakázky</p>';
  updateAssignmentTimers();
@@ -528,7 +578,8 @@ function renderDriver(){
  const gpsStatus=gpsText||(fresh(pos)?'GPS přesnost ±'+Math.round(pos.accuracy)+' m':'Poloha se nesdílí.');
  $('#own-ride fieldset').disabled=Boolean(j);
  $('#own-ride-status').hidden=!j;
- $('#driver-summary').innerHTML='<div class="drivergrid"><div><section class="panel detail ride-panel"><h2>'+(j?.status==='assigned'?'Nová zakázka':'Aktuální zakázka')+'</h2>'+(j?'<p><b>#'+j.id+' · '+esc(j.name)+' · '+cash(j.cents)+'</b></p><p>'+statusText[j.status]+(j.scheduled?' · '+scheduledJob(j):'')+'</p>'+jobRoute(j)+(j.note?'<p>'+esc(j.note)+'</p>':'')+'<div class="ride-actions">'+driverActions(j)+'</div>':'<p>Čekáte na novou zakázku od dispečera.</p>')+
+ $('#driver-summary').innerHTML='<div class="drivergrid"><div><section class="panel detail ride-panel"><h2>'+(j?.status==='assigned'?'Nová zakázka':'Aktuální zakázka')+'</h2>'+(j?'<p><b>#'+j.id+' · '+esc(j.name)+' · '+cash(j.cents)+'</b></p><p>'+statusText[j.status]+(j.scheduled?' · '+scheduledJob(j):'')+'</p>'+jobRoute(j)+(j.payment?'<p>Platba '+(j.payment==='card'?'kartou u řidiče':'hotově')+'</p>':'')+
+   (j.phone?'<p>Tel. '+esc(j.phone)+'</p>':'')+(j.note?'<p>'+esc(j.note)+'</p>':'')+'<div class="ride-actions">'+driverActions(j)+'</div>':'<p>Čekáte na novou zakázku od dispečera.</p>')+
    '<button type="button" class="ride-sound" data-ride-sound>'+(rideAudio?.state==='running'?'Vyzkoušet zvuk':'Zapnout zvuk zakázek')+'</button>'+(nativeLocation?'':'<button type="button" class="ride-sound" data-ride-push>'+
    (ridePushEnabled?'Oznámení jsou zapnutá':'Zapnout oznámení zakázek')+'</button>')+'</section></div><div><section class="panel detail"><h2>Dostupnost</h2><div class="actions"><button data-availability aria-pressed="'+Boolean(state.occupied?.[actor])+'" '+(j?'disabled':'')+'>'+(state.occupied?.[actor]?'Nastavit jako volný':'Nastavit jako obsazený')+'</button></div></section><section class="panel detail"><h2>Sdílení polohy</h2><p>'+esc(gpsStatus)+'</p><div class="actions"><button data-gps>'+ (!gpsRunning()?(state.shiftOpen?'Obnovit GPS':'Zahájit směnu a zapnout GPS'):'Ukončit směnu')+'</button></div></section><section class="panel detail"><h2>Dnešní jízdy</h2><div class="actions"><button data-page="history">Otevřít denní přehled</button></div></section></div></div>';
  const summary=$('#driver-summary');
@@ -1152,7 +1203,7 @@ document.addEventListener('click',async e=>{
    $('#job-edit-title').textContent={cancelJob:'Zrušit zakázku',editPickupTime:'Upravit čas vyzvednutí',editJob:'Upravit údaje zakázky'}[d.jobEdit]+' č. '+job.id;
    $('#job-edit-submit').textContent=editing||timing?'Uložit':'Zrušit zakázku';
    for(const field of ['name','pickup','dropoff','note','scheduled']) form.elements[field].value=job[field]??'';
-   form.elements.price.value=(job.cents/100).toFixed(2);
+   form.elements.price.value=job.payment&&!job.priceSet?'':(job.cents/100).toFixed(2);
    $('#job-editor').showModal();
    return;
  }
@@ -1594,3 +1645,45 @@ document.addEventListener('visibilitychange',()=>{
 
 window.addEventListener('offline',showSync);
 window.addEventListener('online',()=>{showSync();if(live) void poll(); else void restoreSession();});
+
+$('#customer-settings-form').elements.fareMode.addEventListener('change',event=>{
+ const fixed=event.target.value==='fixed';
+ const field=$('#customer-fixed-fare');
+ field.hidden=!fixed;
+ field.querySelector('input').disabled=!fixed;
+ field.querySelector('input').required=fixed;
+ $('#customer-auto-fare').hidden=event.target.value!=='automatic';
+});
+$('#add-loyalty-reward').addEventListener('click',()=>addLoyaltyReward());
+$('#customer-settings-form').addEventListener('submit',async event=>{
+ event.preventDefault();
+ const form=event.currentTarget;
+ const button=form.querySelector('button[type=submit]');
+ button.disabled=true;
+ try{
+   const {phone,email,hours,offers,fareMode,fixedFare,pointsPerRide}=Object.fromEntries(new FormData(form));
+   const rewards=Array.from($('#loyalty-rewards').children,row=>{
+     const value=name=>row.querySelector('[name='+name+']').value;
+     return {name:value('rewardName'),unit:value('rewardUnit'),threshold:value('rewardThreshold'),discount:value('rewardDiscount')};
+   });
+   const loyalty={enabled:form.elements.loyaltyEnabled.checked,pointsPerRide,rewards};
+   const result=await api('customer-settings',{phone,email,hours,offers,fareMode,fixedFare,loyalty});
+   form.dataset.ready='';
+   receive(result);
+   renderCustomerSettings();
+   notify('Nastavení pro zákazníky bylo uloženo.');
+ }catch(error){notify(error.message);}
+ finally{button.disabled=false;}
+});
+$('#queue').addEventListener('click',async event=>{
+ const button=event.target.closest('[data-customer-decision]');
+ if(!button) return;
+ const type=button.dataset.customerDecision;
+ const reject=type==='rejectCustomerRide';
+ if(reject&&!window.confirm('Odmítnout tuto zákaznickou objednávku?')) return;
+ const buttons=button.parentElement.querySelectorAll('button');
+ for(const action of buttons) action.disabled=true;
+ try{
+   if(await perform({type,id:Number(button.dataset.id)})) notify(reject?'Objednávka byla odmítnuta.':'Objednávka byla potvrzena.');
+ }finally{for(const action of buttons) action.disabled=false;}
+});
