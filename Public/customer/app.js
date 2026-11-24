@@ -279,10 +279,12 @@ function renderRides(rides){
     list.append(card);
   }
 }
+let ridesRevision=0;
 async function refreshRides(){
+  const revision=++ridesRevision;
   const current=account;
   const rides=await api('rides');
-  if(account!==current) return;
+  if(account!==current||revision!==ridesRevision) return;
   const latest=rides.find(ride=>!['done','cancelled','rejected'].includes(ride.status));
   const lastRide=$('#last-ride');
   lastRide.hidden=!latest;

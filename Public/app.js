@@ -348,6 +348,8 @@ function render(){
  document.querySelectorAll('[data-page]').forEach(b=>{
    b.hidden=!canSeePage(b.dataset.page);
    b.classList.toggle('active',page===b.dataset.page);
+   if(page===b.dataset.page) b.setAttribute('aria-current','page');
+   else b.removeAttribute('aria-current');
  });
  $('#login').textContent=!live?'Přihlásit se':(profile.firstName||roleLabel(role)).slice(0,1);
  $('#login').setAttribute('aria-label',live?'Odhlásit se':'Přihlásit se');

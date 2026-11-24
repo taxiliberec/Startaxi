@@ -115,7 +115,7 @@ export function change(s,actor,a,now=Date.now()){
         job.scheduled=a.scheduled;
       }else{
         const {name,pickup,dropoff,note='',cents,target,pickupPoint}=a;
-        for(const [value,max] of [[name,120],[pickup,200],[dropoff,200]]) requireThat(typeof value==='string'&&value.trim()&&value.length<=max,'Vyplňte povinné údaje.');
+        for(const [value,max] of [[name,121],[pickup,200],[dropoff,200]]) requireThat(typeof value==='string'&&value.trim()&&value.length<=max,'Vyplňte povinné údaje.');
         requireThat(typeof note==='string'&&note.length<=1000&&Number.isInteger(cents)&&cents>=0&&cents<=10000000,'Zkontrolujte poznámku a cenu.');
         requireThat([target,pickupPoint].every(p=>p==null||validPoint(p)),'Neplatné souřadnice adresy.');
         requireThat(pickup.trim()===job.pickup||validPoint(pickupPoint),'Vyberte adresu vyzvednutí se souřadnicemi.');
