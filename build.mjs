@@ -24,9 +24,10 @@ for(const [name,path,type] of [
 ]){
   assets['/customer/'+name]=[type+'; charset=utf-8',await readFile('node_modules/'+path,'utf8'),false];
 }
+const addressRows=await readFile('data/liberec.json','utf8');
 const model=assets['/model.js'][1].replace(/^export /gm,'');
 const customer=await readFile('customer-api.js','utf8');
 const worker=(await readFile('worker.js','utf8')).replace(/^import .*;\n/gm,'');
 await rm('dist/server',{recursive:true,force:true});
 await mkdir('dist/server',{recursive:true});
-await writeFile('dist/server/index.js','const assets = '+JSON.stringify(assets)+';\n'+model+'\n'+customer+'\n'+worker);
+await writeFile('dist/server/index.js','const addressRows = '+addressRows+';\nconst assets = '+JSON.stringify(assets)+';\n'+model+'\n'+customer+'\n'+worker);

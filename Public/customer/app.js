@@ -446,8 +446,8 @@ for(const field of ['pickup','dropoff']){
       try{
         const {suggestions}=await api('geocode',{address},lookup.signal);
         if(!isCurrent()) return;
-        for(const suggestion of suggestions.slice(0,8)){
-          const option=element('button',suggestion.address);
+        for(const suggestion of suggestions){
+          const option=element('button',(suggestion.approximate?'Podobná adresa · ':'')+suggestion.address);
           option.type='button';
           option.addEventListener('click',()=>{setPoint(field,suggestion.point,suggestion.address);input.focus();});
           list.append(option);
@@ -456,7 +456,7 @@ for(const field of ['pickup','dropoff']){
       }catch(error){
         if(isCurrent()) list.append(element('p',error.message));
       }
-    },350);
+    },150);
   });
 }
 for(const button of document.querySelectorAll('[data-pick-on-map]')){

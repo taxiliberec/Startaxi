@@ -214,7 +214,7 @@ function houseAddress({properties:p,geometry}){
 const ruianBase='https://ags.cuzk.cz/arcgis/rest/services/RUIAN/MapServer/';
 const liberecCode=563889;
 const foldStreet=value=>value.normalize('NFD').replace(/\p{M}/gu,'').toLocaleLowerCase('cs').replace(/\s+/g,' ').trim();
-let liberecStreetCache;
+
 async function ruianQuery(layer,params){
   const endpoint=new URL(layer+'/query',ruianBase);
   endpoint.search=new URLSearchParams({f:'json',...params});
@@ -224,57 +224,43 @@ async function ruianQuery(layer,params){
   if(!Array.isArray(features)) throw Error('Invalid RÚIAN response');
   return features;
 }
-function liberecStreets(){
-  if(liberecStreetCache?.expires>Date.now()) return liberecStreetCache.result;
-  const result=ruianQuery(4,{where:'obec='+liberecCode,outFields:'kod,nazev',returnGeometry:'false'})
-    .then(features=>features.flatMap(({attributes:a})=>Number.isInteger(a?.kod)&&a.kod>0&&typeof a.nazev==='string'
-      ? [{id:a.kod,name:a.nazev,key:foldStreet(a.nazev)}]:[]))
-    .catch(error=>{
-      liberecStreetCache=null;
-      throw error;
-    });
-  liberecStreetCache={result,expires:Date.now()+86400000};
-  return result;
+const streetsByKey=new Map();
+for(const [street,house,orientation,zip,lat,lng] of addressRows){
+  const key=foldStreet(street);
+  if(!streetsByKey.has(key)) streetsByKey.set(key,[]);
+  streetsByKey.get(key).push({street,house,orientation,zip,lat,lng});
 }
-async function liberecAddresses(address){
-  const [streetAndNumber,city,...extras]=foldStreet(address).split(',').map(part=>part.trim());
-  if(extras.length||(city&&!/^(?:\d{3}\s?\d{2}\s+)?liberec\b/.test(city))) return [];
-  const query=streetAndNumber.replace(/\s+liberec$/,'');
-  const numbered=query.match(/^(.+?)\s+(\d{1,5})(?:\/(\d{1,5})([a-z])?)?$/);
-  const streetQuery=numbered?.[1]??query;
-  if(streetQuery.length<3) return [];
-  const streets=await liberecStreets();
-  const exact=streets.filter(street=>street.key===streetQuery);
-  const matches=exact.length?exact:streets.filter(street=>street.key.startsWith(streetQuery))
-    .sort((a,b)=>a.name.localeCompare(b.name,'cs')).slice(0,5);
-  if(!matches.length) return [];
-  const byId=new Map(matches.map(street=>[street.id,street.name]));
-  let where='ulice IN ('+matches.map(street=>street.id).join(',')+')';
-  if(numbered){
-    const house=Number(numbered[2]);
-    where+=numbered[3]
-      ? ' AND cislodomovni='+house+' AND cisloorientacni='+Number(numbered[3])
-      : ' AND (cislodomovni='+house+' OR cisloorientacni='+house+')';
+function liberecAddresses(address){
+  const [line,city]=foldStreet(address).split(',').map(part=>part.trim());
+  if(city&&!/^(?:\d{3}\s?\d{2}\s+)?liberec\b/.test(city)) return [];
+  const query=line.replace(/\s+liberec$/,'').replace(/\s*\/\s*/g,'/');
+  const parts=query.match(/^(.+?)\s+((?:ev\.\s*)?\d+[a-z]?)(?:\/(\d*[a-z]?))?$/);
+  const street=parts?.[1]??query;
+  const number=parts?.[2], orientation=parts?.[3];
+  const hits=[];
+  for(const [key,rows] of streetsByKey){
+    if(!key.startsWith(street)) continue;
+    for(const row of rows){
+      let rank=0;
+      if(number){
+        if(orientation!==undefined){
+          if(row.house===number&&row.orientation===orientation) rank=0;
+          else if(row.house===number&&row.orientation.startsWith(orientation)) rank=1;
+          else if(orientation&&row.orientation===orientation) rank=2;
+          else continue;
+        }else if(row.house!==number&&row.orientation!==number){
+          if(!row.house.startsWith(number)&&!row.orientation.startsWith(number)) continue;
+          rank=1;
+        }
+      }
+      hits.push({row,rank});
+    }
   }
-  const features=await ruianQuery(1,{
-    where,outFields:'ulice,cislodomovni,cisloorientacni,cisloorientacnipismeno,psc',
-    outSR:'4326',returnGeometry:'true',
-    orderByFields:'ulice,cislodomovni,cisloorientacni,cisloorientacnipismeno',resultRecordCount:'100'
-  });
-  const suggestions=new Map();
-  for(const {attributes:a,geometry} of features){
-    const street=byId.get(a?.ulice);
-    const point={lat:geometry?.y,lng:geometry?.x};
-    if(!street||!Number.isInteger(a.cislodomovni)||a.cislodomovni<=0||!validPoint(point)) continue;
-    const suffix=a.cisloorientacnipismeno??'';
-    if(numbered?.[4]&&suffix.toLowerCase()!==numbered[4]) continue;
-    const orientation=a.cisloorientacni?'/'+a.cisloorientacni+suffix:'';
-    const zip=String(a.psc??'').replace(/^(\d{3})(\d{2})$/,'$1 $2');
-    const location=zip?zip+' Liberec':'Liberec';
-    const label=street+' '+a.cislodomovni+orientation+', '+location;
-    suggestions.set(label,{address:label,point});
-  }
-  return [...suggestions.values()].slice(0,50);
+  hits.sort((a,b)=>a.rank-b.rank||a.row.street.localeCompare(b.row.street,'cs')||parseInt(a.row.house)-parseInt(b.row.house));
+  return hits.map(({row:r,rank})=>({
+    address:r.street+' '+r.house+(r.orientation?'/'+r.orientation:'')+', '+r.zip.slice(0,3)+' '+r.zip.slice(3)+' Liberec',
+    point:{lat:r.lat,lng:r.lng},...(rank===2?{approximate:true}:{})
+  }));
 }
 
 const base64url=bytes=>btoa(String.fromCharCode(...bytes)).replaceAll('+','-').replaceAll('/','_').replace(/=+$/,'');
@@ -371,7 +357,7 @@ async function geocode(request,path){
       const match=houseAddress(feature);
       if(match&&!houses.has(match.address)) houses.set(match.address,match);
     }
-    return json({suggestions:[...houses.values()].slice(0,8)});
+    return json({suggestions:[...houses.values()]});
   }catch{
     return json({error:'Vyhledávání adres je dočasně nedostupné.'},503);
   }
