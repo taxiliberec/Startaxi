@@ -3,6 +3,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 COPY build.mjs server.mjs worker.js customer-api.js ./
+COPY data/ ./data/
 COPY Public/ ./public/
 COPY Migrations/ ./migrations/
 RUN npm run build

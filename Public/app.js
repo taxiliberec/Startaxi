@@ -1034,7 +1034,7 @@ for(const form of [$('#booking'),$('#own-ride'),$('#job-edit-form')]){
          for(const result of suggestions){
            const choice=document.createElement('button');
            choice.type='button';
-           choice.textContent=result.address;
+           choice.textContent=(result.approximate?'Podobná adresa · ':'')+result.address;
            // Keep the input focused until the suggestion click is delivered, including on iOS Safari.
            choice.addEventListener('pointerdown',event=>{
              if(event.button===0) event.preventDefault();
@@ -1054,7 +1054,7 @@ for(const form of [$('#booking'),$('#own-ride'),$('#job-edit-form')]){
            showStatus('Našeptávání je dočasně nedostupné. Zkuste hledání znovu.');
          }
        }
-     },350);
+     },150);
    });
    input.addEventListener('keydown',event=>{
      if(event.key==='Escape') clear();
