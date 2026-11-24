@@ -348,6 +348,8 @@ function render(){
  document.querySelectorAll('[data-page]').forEach(b=>{
    b.hidden=!canSeePage(b.dataset.page);
    b.classList.toggle('active',page===b.dataset.page);
+   if(page===b.dataset.page) b.setAttribute('aria-current','page');
+   else b.removeAttribute('aria-current');
  });
  $('#login').textContent=!live?'Přihlásit se':(profile.firstName||roleLabel(role)).slice(0,1);
  $('#login').setAttribute('aria-label',live?'Odhlásit se':'Přihlásit se');
@@ -554,7 +556,7 @@ function renderQueue(){
  $('#maphint').hidden=!can('assign');
  document.querySelectorAll('[data-queue]').forEach(b=>b.classList.toggle('active',b.dataset.queue===queue));
  $('#maphint').textContent=selected?driverName(selected)+' · vyberte zakázku':'Vyberte volné vozidlo';
- $('#queue').innerHTML=jobs.map(j=>'<div class="job-card"><details class="job-menu"><summary aria-label="Možnosti zakázky '+j.id+'">⋯</summary><div><button type="button" data-job-edit="cancelJob" data-id="'+j.id+'">Zrušit zakázku</button><button type="button" data-job-edit="editPickupTime" data-id="'+j.id+'">Upravit čas vyzvednutí</button><button type="button" data-job-edit="editJob" data-id="'+j.id+'">Upravit údaje zakázky</button></div></details><button class="job" data-job="'+j.id+'" '+(j.status!=='waiting'||!can('assign')?'disabled':'')+'><div class="jobtop"><b>'+esc(j.name)+'</b><span class="badge">'+statusText[j.status]+'</span></div>'+jobRoute(j)+'<div class="jobfoot"><div class="job-times"><span>Vytvořeno '+jobTime(j.created)+'</span>'+
+ $('#queue').innerHTML=jobs.map(j=>'<div class="job-card"><details class="job-menu"><summary aria-label="Možnosti zakázky '+j.id+'">⋯</summary><div><button type="button" data-job-edit="cancelJob" data-id="'+j.id+'">Zrušit zakázku</button><button type="button" data-job-edit="editPickupTime" data-id="'+j.id+'">Upravit čas vyzvednutí</button><button type="button" data-job-edit="editJob" data-id="'+j.id+'">Upravit údaje zakázky</button></div></details><button class="job" data-job="'+j.id+'" '+(j.status!=='waiting'||!can('assign')?'disabled':'')+'><div class="jobtop"><b>'+esc(j.name)+'</b><span class="badge" data-ride-status="'+esc(j.status)+'">'+statusText[j.status]+'</span></div>'+jobRoute(j)+'<div class="jobfoot"><div class="job-times"><span>Vytvořeno '+jobTime(j.created)+'</span>'+
    (scheduledJob(j)||'<span>Co nejdříve</span>')+(j.driver?'<span>'+esc(driverName(j.driver))+'</span>':'')+
    (j.payment?'<span>Zákaznická objednávka · '+(j.payment==='card'?'Kartou u řidiče':'Hotově')+'</span>':'')+
    (j.phone?'<span>Tel. '+esc(j.phone)+'</span>':'')+
@@ -625,7 +627,7 @@ function renderDriver(){
  const gpsStatus=gpsText||(fresh(pos)?'GPS přesnost ±'+Math.round(pos.accuracy)+' m':'Poloha se nesdílí.');
  $('#own-ride fieldset').disabled=Boolean(j);
  $('#own-ride-status').hidden=!j;
- $('#driver-summary').innerHTML='<div class="drivergrid"><div><section class="panel detail ride-panel"><h2>'+(j?.status==='assigned'?'Nová zakázka':'Aktuální zakázka')+'</h2>'+(j?'<p><b>#'+j.id+' · '+esc(j.name)+' · '+cash(j.cents)+'</b></p><p>'+statusText[j.status]+(j.scheduled?' · '+scheduledJob(j):'')+'</p>'+jobRoute(j)+(j.payment?'<p>Platba '+(j.payment==='card'?'kartou u řidiče':'hotově')+'</p>':'')+
+ $('#driver-summary').innerHTML='<div class="drivergrid"><div><section class="panel detail ride-panel"><h2>'+(j?.status==='assigned'?'Nová zakázka':'Aktuální zakázka')+'</h2>'+(j?'<p><b>#'+j.id+' · '+esc(j.name)+' · '+cash(j.cents)+'</b></p><p><span data-ride-status="'+esc(j.status)+'">'+statusText[j.status]+'</span>'+(j.scheduled?' · '+scheduledJob(j):'')+'</p>'+jobRoute(j)+(j.payment?'<p>Platba '+(j.payment==='card'?'kartou u řidiče':'hotově')+'</p>':'')+
    (j.phone?'<p>Tel. '+esc(j.phone)+'</p>':'')+(j.note?'<p>'+esc(j.note)+'</p>':'')+'<div class="ride-actions">'+driverActions(j)+'</div>':'<p>Čekáte na novou zakázku od dispečera.</p>')+
    '<button type="button" class="ride-sound" data-ride-sound>'+(rideAudio?.state==='running'?'Vyzkoušet zvuk':'Zapnout zvuk zakázek')+'</button>'+(nativeLocation?'':'<button type="button" class="ride-sound" data-ride-push>'+
    (ridePushEnabled?'Oznámení jsou zapnutá':'Zapnout oznámení zakázek')+'</button>')+'</section></div><div><section class="panel detail"><h2>Dostupnost</h2><div class="actions"><button data-availability aria-pressed="'+Boolean(state.occupied?.[actor])+'" '+(j?'disabled':'')+'>'+(state.occupied?.[actor]?'Nastavit jako volný':'Nastavit jako obsazený')+'</button></div></section><section class="panel detail"><h2>Sdílení polohy</h2><p>'+esc(gpsStatus)+'</p><div class="actions"><button data-gps>'+ (!gpsRunning()?(state.shiftOpen?'Obnovit GPS':'Zahájit směnu a zapnout GPS'):'Ukončit směnu')+'</button></div></section><section class="panel detail"><h2>Dnešní jízdy</h2><div class="actions"><button data-page="history">Otevřít denní přehled</button></div></section></div></div>';

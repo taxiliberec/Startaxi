@@ -183,3 +183,20 @@
 #loyalty-rewards { display: grid; gap: 12px; }
 #loyalty-rewards fieldset { display: grid; gap: 8px; border: 1px solid var(--line); border-radius: 8px; margin: 0; min-width: 0; }
 #customer-directory th, #customer-directory td { white-space: normal; overflow-wrap: anywhere; }
+
+.top nav button:focus-visible, .ride-panel button:focus-visible { outline: 3px solid #e8ad00; outline-offset: -3px; }
+.ride-panel { border-top: 4px solid var(--blue); }
+.ride-panel .actions button, .top nav button { min-height: 44px; }
+@media(max-width:570px) {
+  #dispatch .mappanel { grid-column: auto; grid-row: auto; }
+  #dispatch { display: flex; flex-direction: column; }
+  #dispatch .formpanel { order: 1; }
+  #dispatch .mappanel { order: 2; }
+}
+
+[data-ride-status] { display: inline-block; border-radius: 8px; padding: .2em .65em; font-weight: 700; }
+[data-ride-status="waiting"], [data-ride-status="confirmed"] { background: #fff0bd; color: #674600; }
+[data-ride-status="assigned"], [data-ride-status="accepted"] { background: #dcecff; color: #174a81; }
+[data-ride-status="onboard"] { background: #efe4ff; color: #582e83; }
+[data-ride-status="done"] { background: #d5f4e4; color: #135737; }
+[data-ride-status="cancelled"], [data-ride-status="rejected"] { background: #ffe1df; color: #872e29; }

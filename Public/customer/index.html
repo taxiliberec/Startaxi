@@ -16,7 +16,7 @@
 <body>
   <main id="auth">
     <section class="auth-card">
-      <div class="brand"><img src="./icon-192.png" alt="" width="46" height="46"><div><b>Taxi Liberec</b><small>Taxi Liberec</small></div></div>
+      <div class="brand"><img src="./icon-192.png" alt="" width="46" height="46"><div><b>Taxi Liberec</b><small>Zákaznická aplikace</small></div></div>
       <h1 id="auth-title">Přihlášení</h1>
       <form id="login">
         <label>Přihlašovací jméno<input name="username" required autocomplete="username" maxlength="40" autocapitalize="none"></label>
@@ -53,6 +53,7 @@
     <p id="map-message" role="status" hidden></p>
     <div class="map-actions">
       <button id="last-ride" type="button" hidden></button>
+      <button class="history-shortcut" data-page="history" type="button">Moje jízdy</button>
       <button id="book" class="primary" type="button">Objednat jízdu</button>
     </div>
     <dialog id="menu" aria-labelledby="menu-title">
@@ -73,12 +74,14 @@
       <p id="panel-message" role="status"></p>
       <section id="booking" hidden>
         <form id="ride">
+          <fieldset class="route-fields"><legend>Trasa jízdy</legend>
           <label>Adresa vyzvednutí<input name="pickup" autocomplete="off" aria-controls="pickup-suggestions" required maxlength="200"></label>
           <div class="address-actions"><button type="button" id="use-location">Použít moji polohu</button><button type="button" data-pick-on-map="pickup">Vybrat na mapě</button></div>
           <div class="suggestions" aria-live="polite" id="pickup-suggestions"></div>
           <label>Cílová adresa<input name="dropoff" autocomplete="off" aria-controls="dropoff-suggestions" required maxlength="200"></label>
           <div class="suggestions" aria-live="polite" id="dropoff-suggestions"></div>
           <div class="address-actions"><button type="button" data-pick-on-map="dropoff">Vybrat cíl na mapě</button></div>
+          </fieldset>
           <label>Vyzvednutí<select name="timing"><option value="now">Co nejdřív</option><option value="later">Na určitý čas</option></select></label>
           <label id="scheduled-label" hidden>Datum a čas (Česko)<input name="scheduled" type="datetime-local" disabled></label>
           <fieldset><legend>Platba po jízdě</legend><div class="payment"><label><input type="radio" name="payment" value="cash" checked> Hotově</label><label><input type="radio" name="payment" value="card"> Kartou u řidiče</label></div></fieldset>
