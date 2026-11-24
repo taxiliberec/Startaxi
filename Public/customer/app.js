@@ -273,7 +273,9 @@ function renderRides(rides){
     const reservation=ride.scheduled?element('p','Vyzvednutí '+ride.scheduled.slice(0,10).split('-').reverse().join('.')+' v '+ride.scheduled.slice(11),'details'):null;
     card.append(time,element('p',ride.pickup+' → '+ride.dropoff,'ride-route'));
     if(reservation) card.append(reservation);
-    card.append(element('strong',statuses[ride.status]||ride.status));
+    const badge=element('strong',statuses[ride.status]||ride.status);
+    badge.dataset.rideStatus=ride.status;
+    card.append(badge);
     if(ride.cents!==null) card.append(element('p',currency.format(ride.cents/100),'details'));
     if(ride.rewardDiscountCents) card.append(element('p',ride.rewardName+' · sleva '+currency.format(ride.rewardDiscountCents/100),'details'));
     list.append(card);

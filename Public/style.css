@@ -193,3 +193,10 @@
   #dispatch .formpanel { order: 1; }
   #dispatch .mappanel { order: 2; }
 }
+
+[data-ride-status] { display: inline-block; border-radius: 8px; padding: .2em .65em; font-weight: 700; }
+[data-ride-status="waiting"], [data-ride-status="confirmed"] { background: #fff0bd; color: #674600; }
+[data-ride-status="assigned"], [data-ride-status="accepted"] { background: #dcecff; color: #174a81; }
+[data-ride-status="onboard"] { background: #efe4ff; color: #582e83; }
+[data-ride-status="done"] { background: #d5f4e4; color: #135737; }
+[data-ride-status="cancelled"], [data-ride-status="rejected"] { background: #ffe1df; color: #872e29; }

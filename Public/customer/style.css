@@ -86,3 +86,10 @@ legend { font-weight: 650; font-size: .875rem; }
 .map-actions:has(#book) { grid-template-columns: auto minmax(0,1fr); width: min(calc(100% - 2rem),25rem); }
 #last-ride { grid-column: 1 / -1; font-weight: 650; }
 #panel .dialog-head { position: sticky; top: -1.1rem; z-index: 1; background: var(--paper); padding-block: .45rem; }
+
+[data-ride-status] { display: inline-block; border-radius: 8px; padding: .2em .65em; font-weight: 700; }
+[data-ride-status="waiting"], [data-ride-status="confirmed"] { background: #fff0bd; color: #674600; }
+[data-ride-status="assigned"], [data-ride-status="accepted"] { background: #dcecff; color: #174a81; }
+[data-ride-status="onboard"] { background: #efe4ff; color: #582e83; }
+[data-ride-status="done"] { background: #d5f4e4; color: #135737; }
+[data-ride-status="cancelled"], [data-ride-status="rejected"] { background: #ffe1df; color: #872e29; }
