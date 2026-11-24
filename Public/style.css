@@ -175,3 +175,11 @@
 .assignment-status { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; padding: 0 0.75rem 0.75rem; }
 .assignment-status span { font-size: 0.85rem; }
 .ride-panel [data-ride-push] { margin-inline-start: 0.5rem; }
+
+.customer-tabs { flex-wrap: wrap; justify-content: flex-start; }
+.customer-tabs button { flex: 0 1 auto; padding-inline: 14px; min-height: 40px; }
+#customers form { max-width: 640px; padding-inline: 0; }
+#customers input[type="checkbox"] { width: auto; height: auto; margin: 0 6px 0 0; }
+#loyalty-rewards { display: grid; gap: 12px; }
+#loyalty-rewards fieldset { display: grid; gap: 8px; border: 1px solid var(--line); border-radius: 8px; margin: 0; min-width: 0; }
+#customer-directory th, #customer-directory td { white-space: normal; overflow-wrap: anywhere; }

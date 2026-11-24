@@ -36,7 +36,7 @@ const can=key=>allows(permissions,key);
 const driverPage=()=>['driverRide','availability','gps'].some(can);
 const canSeePage=key=>({
  dispatch:['dispatchJobs','fleetMap','create'].some(can),driver:driverPage(),
- history:can('history'),activity:isOwner(actor),settings:true
+ history:can('history'),activity:isOwner(actor),employees:isOwner(actor),customers:isOwner(actor),settings:true
 })[key]===true;
 const roleLabel=value=>({owner:'Majitel firmy',dispatcher:'Dispečer',driver:'Řidič'})[value];
 const fleetHistory=()=>role!=='driver';
@@ -62,24 +62,60 @@ function addLoyaltyReward(reward={}){
  container.append(row);
  $('#add-loyalty-reward').disabled=container.children.length>=10;
 }
+let customerTab='configuration',directoryRequest=0;
 function renderCustomerSettings(){
- const panel=$('#customer-settings');
- panel.hidden=!isOwner(actor);
- if(panel.hidden) return;
- const form=$('#customer-settings-form');
+ const configuration=$('#customer-settings-form');
+ const loyalty=$('#customer-loyalty-form');
  const values=state.customerSettings||{};
- if(form.dataset.ready===actor) return;
- form.dataset.ready=actor;
- for(const name of ['phone','email','hours']) form.elements[name].value=values[name]||'';
- form.elements.offers.value=(values.offers||[]).join('\n');
- form.elements.fareMode.value=values.fareMode??'automatic';
- form.elements.fixedFare.value=values.fixedFare??'';
- form.elements.fareMode.dispatchEvent(new Event('change'));
- form.elements.loyaltyEnabled.checked=values.loyalty?.enabled===true;
- form.elements.pointsPerRide.value=values.loyalty?.pointsPerRide??1;
- $('#loyalty-rewards').replaceChildren();
- $('#add-loyalty-reward').disabled=false;
- for(const reward of values.loyalty?.rewards??[]) addLoyaltyReward(reward);
+ if(configuration.dataset.ready!==actor){
+   configuration.dataset.ready=actor;
+   for(const name of ['phone','email','hours']) configuration.elements[name].value=values[name]||'';
+   configuration.elements.offers.value=(values.offers||[]).join('\n');
+   configuration.elements.fareMode.value=values.fareMode??'automatic';
+   configuration.elements.fixedFare.value=values.fixedFare??'';
+   configuration.elements.fareMode.dispatchEvent(new Event('change'));
+ }
+ if(loyalty.dataset.ready!==actor){
+   loyalty.dataset.ready=actor;
+   loyalty.elements.loyaltyEnabled.checked=values.loyalty?.enabled===true;
+   loyalty.elements.pointsPerRide.value=values.loyalty?.pointsPerRide??1;
+   $('#loyalty-rewards').replaceChildren();
+   $('#add-loyalty-reward').disabled=false;
+   for(const reward of values.loyalty?.rewards??[]) addLoyaltyReward(reward);
+ }
+ for(const button of document.querySelectorAll('[data-customer-tab]')){
+   const active=button.dataset.customerTab===customerTab;
+   button.classList.toggle('active',active);
+   button.setAttribute('aria-pressed',String(active));
+ }
+ for(const panel of document.querySelectorAll('[data-customer-pane]')) panel.hidden=panel.dataset.customerPane!==customerTab;
+}
+async function loadCustomerDirectory(){
+ const request=++directoryRequest;
+ const generation=sessionGeneration;
+ const table=$('#customer-directory');
+ const status=$('#customer-directory-status');
+ const body=table.tBodies[0];
+ table.hidden=true;
+ body.replaceChildren();
+ status.textContent='Načítám zákazníky…';
+ try{
+   const customers=await api('customer-directory');
+   if(request!==directoryRequest||generation!==sessionGeneration||!isOwner(actor)) return;
+   const rows=customers.map(({firstName,lastName})=>{
+     const row=document.createElement('tr');
+     row.insertCell().textContent=lastName;
+     row.insertCell().textContent=firstName;
+     return row;
+   });
+   body.replaceChildren(...rows);
+   table.hidden=!rows.length;
+   status.textContent=rows.length?'Registrovaní zákazníci: '+rows.length:'Zatím nejsou registrovaní žádní zákazníci.';
+ }catch(error){
+   if(request!==directoryRequest||generation!==sessionGeneration) return;
+   if(error.status===401){lockApp();return;}
+   status.textContent=error.message;
+ }
 }
 const statusText={waiting:'Čeká',assigned:'Čeká na přijetí',accepted:'K vyzvednutí',onboard:'Se zákazníkem',done:'Dokončeno'};
 let state=null, actor='dispatch', live=false, page='dispatch', queue='waiting', selected='', filter='', reportDate=day(), gps=null, gpsHeartbeat=null, gpsText='', lastGps=0, pending=false, incoming=null, noticeCount=0;
@@ -243,8 +279,15 @@ for(const id of draftForms){
 function lockApp(){
  sessionGeneration++; ridePushEnabled=false; revision=-1; drivers=[]; vehicles=[]; profile=null; state=null; live=false; stopGps();
  for(const form of [$('#booking'),$('#own-ride'),$('#profile-form'),$('#owner-form'),$('#employee-form')]) form.reset();
- $('#customer-settings-form').reset();
- delete $('#customer-settings-form').dataset.ready;
+ for(const form of [$('#customer-settings-form'),$('#customer-loyalty-form')]){
+   form.reset();
+   delete form.dataset.ready;
+ }
+ customerTab='configuration';
+ directoryRequest++;
+ $('#customer-directory').tBodies[0].replaceChildren();
+ $('#customer-directory').hidden=true;
+ $('#customer-directory-status').textContent='';
  for(const dialog of document.querySelectorAll('dialog[open]')) dialog.close();
  $('#activity').replaceChildren();
  fillDefaultPermissions();
@@ -280,7 +323,7 @@ function stats(){
    ['history','money','violet','Tržby za den',cash(jobs.reduce((t,j)=>t+j.cents,0))],
    ['history','calendar','amber','Uzavřené směny',state.shifts.filter(s=>s.driver===actor&&s.date===(page==='history'?reportDate:day())).length]
  ]).filter(([permission])=>can(permission));
- $('#stats').hidden=page==='settings'||!values.length;
+ $('#stats').hidden=['settings','customers','employees'].includes(page)||!values.length;
  $('#stats').innerHTML=values.map(([,i,c,label,v])=>'<div class="stat"><span class="sticon '+c+'">'+icon(i)+'</span><div><p>'+label+'</p><strong>'+v+'</strong></div></div>').join('');
 }
 function render(){
@@ -293,7 +336,11 @@ function render(){
  $('#driver').hidden=page!=='driver';
  $('#activity').hidden=page!=='activity';
  $('#settings').hidden=page!=='settings';
- if(page==='settings'){renderOwners();renderUserSettings();renderFleetSettings();renderCustomerSettings();}
+ $('#customers').hidden=page!=='customers'||!isOwner(actor);
+ $('#employees').hidden=page!=='employees'||!isOwner(actor);
+ if(page==='settings'){renderOwners();renderFleetSettings();}
+ if(page==='employees'&&isOwner(actor)) renderUserSettings();
+ if(page==='customers'&&isOwner(actor)) renderCustomerSettings();
  document.querySelectorAll('[data-permission]').forEach(el=>el.hidden=!can(el.dataset.permission));
  $('#vehicle-status').hidden=page!=='dispatch'||!can('fleetMap');
  $('#driver-map-panel').hidden=!can('gps')&&!can('driverRide');
@@ -305,8 +352,8 @@ function render(){
  $('#login').textContent=!live?'Přihlásit se':(profile.firstName||roleLabel(role)).slice(0,1);
  $('#login').setAttribute('aria-label',live?'Odhlásit se':'Přihlásit se');
  $('#connection').textContent=roleLabel(role);
- $('#title').textContent={dispatch:'Dispečink',driver:'Přehled řidiče',history:'Denní přehled',activity:'Majitel firmy',settings:'Nastavení'}[page];
- $('#subtitle').textContent=page==='dispatch'?'Spravujte zakázky a sledujte polohu vozidel v Liberci.':page==='driver'?driverName(actor)+' · Vozidlo '+actor:page==='activity'?'Přehled změn zakázek, směn a účtů řidičů.':page==='settings'?'Profil a nastavení aplikace':'Dokončené jízdy, tržby a uzávěrky směn.';
+ $('#title').textContent={dispatch:'Dispečink',driver:'Přehled řidiče',history:'Denní přehled',activity:'Majitel firmy',employees:'Zaměstnanci',customers:'Zákaznická aplikace',settings:'Nastavení'}[page];
+ $('#subtitle').textContent=page==='dispatch'?'Spravujte zakázky a sledujte polohu vozidel v Liberci.':page==='driver'?driverName(actor)+' · Vozidlo '+actor:page==='activity'?'Přehled změn zakázek, směn a účtů řidičů.':page==='employees'?'Účty řidičů a dispečerů, vozidla a oprávnění.':page==='customers'?'Ceny, věrnostní odměny a registrovaní zákazníci.':page==='settings'?'Profil a nastavení aplikace':'Dokončené jízdy, tržby a uzávěrky směn.';
  stats();
  if(page==='dispatch'){renderQueue();renderMap();}
  if(page==='history') renderHistory();
@@ -1159,6 +1206,12 @@ document.addEventListener('click',async e=>{
  const b=e.target.closest('button');
  if(!b||!live) return;
  const d=b.dataset;
+ if(d.customerTab&&page==='customers'&&isOwner(actor)){
+   customerTab=d.customerTab;
+   renderCustomerSettings();
+   if(customerTab==='directory') void loadCustomerDirectory();
+   return;
+ }
  if(d.ownerTab&&isOwner(actor)&&Object.hasOwn(ownerTabs,d.ownerTab)){
    ownerTab=d.ownerTab;
    renderActivity();
@@ -1168,6 +1221,7 @@ document.addEventListener('click',async e=>{
  if(d.page){
    if(!canSeePage(d.page)) return;
    page=d.page;
+   if(page==='customers') customerTab='configuration';
    void poll();
    if(page==='settings') fillProfileForm();
    render();
@@ -1506,7 +1560,7 @@ for(const selector of ['#employee-list','#owner-list']){
  });
 }
 function renderUserSettings(){
- $('#user-settings').hidden=!isOwner(actor);
+ $('#employees').hidden=!isOwner(actor);
  if(!isOwner(actor)) return;
  $('#employee-list').innerHTML=(state.employees||[]).map(employee=>
    '<div class="employee"><div><strong>'+esc([employee.firstName,employee.lastName].filter(Boolean).join(' ')||employee.username)+'</strong><p>'+roleLabel(employee.role)+' · '+esc(employee.username)+'</p>'+
@@ -1655,26 +1709,36 @@ $('#customer-settings-form').elements.fareMode.addEventListener('change',event=>
  $('#customer-auto-fare').hidden=event.target.value!=='automatic';
 });
 $('#add-loyalty-reward').addEventListener('click',()=>addLoyaltyReward());
-$('#customer-settings-form').addEventListener('submit',async event=>{
- event.preventDefault();
- const form=event.currentTarget;
- const button=form.querySelector('button[type=submit]');
- button.disabled=true;
- try{
-   const {phone,email,hours,offers,fareMode,fixedFare,pointsPerRide}=Object.fromEntries(new FormData(form));
-   const rewards=Array.from($('#loyalty-rewards').children,row=>{
-     const value=name=>row.querySelector('[name='+name+']').value;
-     return {name:value('rewardName'),unit:value('rewardUnit'),threshold:value('rewardThreshold'),discount:value('rewardDiscount')};
-   });
-   const loyalty={enabled:form.elements.loyaltyEnabled.checked,pointsPerRide,rewards};
-   const result=await api('customer-settings',{phone,email,hours,offers,fareMode,fixedFare,loyalty});
-   form.dataset.ready='';
-   receive(result);
-   renderCustomerSettings();
-   notify('Nastavení pro zákazníky bylo uloženo.');
- }catch(error){notify(error.message);}
- finally{button.disabled=false;}
-});
+for(const form of [$('#customer-settings-form'),$('#customer-loyalty-form')]){
+ form.addEventListener('submit',async event=>{
+   event.preventDefault();
+   const button=form.querySelector('button[type=submit]');
+   const generation=sessionGeneration;
+   if(!live||!isOwner(actor)||button.disabled) return;
+   button.disabled=true;
+   try{
+     const fields=Object.fromEntries(new FormData(form));
+     let settings=fields;
+     if(form.id==='customer-loyalty-form'){
+       const rewards=Array.from($('#loyalty-rewards').children,row=>{
+         const value=name=>row.querySelector('[name='+name+']').value;
+         return {name:value('rewardName'),unit:value('rewardUnit'),threshold:value('rewardThreshold'),discount:value('rewardDiscount')};
+       });
+       settings={loyalty:{enabled:form.elements.loyaltyEnabled.checked,pointsPerRide:fields.pointsPerRide,rewards}};
+     }
+     const result=await api('customer-settings',settings);
+     if(generation!==sessionGeneration||!live) return;
+     delete form.dataset.ready;
+     receive(result);
+     if(page==='customers') renderCustomerSettings();
+     notify(form.id==='customer-loyalty-form'?'Věrnostní program byl uložen.':'Nastavení aplikace bylo uloženo.');
+   }catch(error){
+     if(generation!==sessionGeneration) return;
+     if(error.status===401) lockApp();
+     else notify(error.message);
+   }finally{button.disabled=false;}
+ });
+}
 $('#queue').addEventListener('click',async event=>{
  const button=event.target.closest('[data-customer-decision]');
  if(!button) return;

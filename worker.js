@@ -470,13 +470,21 @@ async function handleApi(request,env,path){
       return json({ok:true});
     }
   }
+  if(path==='customer-directory'&&request.method==='GET'){
+    if(!isOwner(actor)) throw new AccessDenied('Přístup zamítnut.');
+    const compare=new Intl.Collator('cs');
+    const customers=Object.values(current.state.customerAccounts??{})
+      .map(({firstName,lastName})=>({firstName,lastName}))
+      .sort((a,b)=>compare.compare(a.lastName,b.lastName)||compare.compare(a.firstName,b.firstName));
+    return json(customers);
+  }
   if(path==='customer-settings'&&request.method==='POST'){
     if(!isOwner(actor)) throw new AccessDenied('Přístup zamítnut.');
     const input=await decode(request);
     const {state,revision}=await updateState(env.DB,s=>{
       checkSession(s);
-      const {fareMode,fixedFare,loyalty}=s.customerSettings||{};
-      s.customerSettings=customerSettings({fareMode,fixedFare,loyalty,...input});
+      const {phone,email,hours,offers,fareMode,fixedFare,loyalty}=s.customerSettings||{};
+      s.customerSettings=customerSettings({phone,email,hours,offers:(offers??[]).join('\n'),fareMode,fixedFare,loyalty,...input});
     });
     return json(view(state,actor,revision,users));
   }
