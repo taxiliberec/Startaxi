@@ -200,3 +200,8 @@
 [data-ride-status="onboard"] { background: #efe4ff; color: #582e83; }
 [data-ride-status="done"] { background: #d5f4e4; color: #135737; }
 [data-ride-status="cancelled"], [data-ride-status="rejected"] { background: #ffe1df; color: #872e29; }
+
+#map .map-driver-label { transform: translate(-50%,calc(-100% - 22px)); }
+#driver-map .marker:has(.car-image) small { top: auto; bottom: calc(100% + 4px); }
+#map .marker .car-image, #driver-map .marker .car-image { width: 31px; height: 24px; flex-shrink: 0; }
+#map-icon-preview svg { width: 68px; height: 42px; }

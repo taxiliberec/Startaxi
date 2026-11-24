@@ -101,7 +101,7 @@ function employeeDirectory(state,users){
       configured:Boolean(account),role:employeeRole(state,id),permissions:permissionsFor(state,id),vehicleId:assignedVehicle(state,id)?.id};
   }).sort((a,b)=>a.lastName.localeCompare(b.lastName,'cs')||a.firstName.localeCompare(b.firstName,'cs')||a.username.localeCompare(b.username));
 }
-const publicVehicle=({id,make,model,photo})=>({id,make,model,hasPhoto:Boolean(photo)});
+const publicVehicle=({id,make,model,photo,mapIcon})=>({id,make,model,mapIcon:mapIcon??'sedan',hasPhoto:Boolean(photo)});
 const assignedVehicle=(state,id)=>state.vehicles?.[state.vehicleAssignments?.[id]];
 function ownerDirectory(state,users){
   const ids=new Set([...Object.keys(state.profiles||{}),...users.map(([id])=>id)]);
@@ -111,7 +111,8 @@ function ownerDirectory(state,users){
 function vehicleFields(input){
   const make=cleanName(input.make), model=cleanName(input.model);
   if(make.length>80||model.length>80) throw Error('Značka a model mohou mít nejvýše 80 znaků.');
-  return {make,model};
+  if(input.mapIcon!==undefined&&!['sedan','estate','suv','van','hatch'].includes(input.mapIcon)) throw Error('Neplatná ikona vozidla.');
+  return {make,model,...(input.mapIcon?{mapIcon:input.mapIcon}:{})};
 }
 function vehiclePhoto(photo){
   if(typeof photo!=='string'||photo.length>112000||!/^data:image\/jpeg;base64,\/9j\/[A-Za-z0-9+/]+={0,2}$/.test(photo)){
@@ -590,7 +591,7 @@ async function handleApi(request,env,path){
       if(path==='vehicles'){
         const records=(s.vehicles??={});
         if(input.id!==''&&!Object.hasOwn(records,id)) throw Error('Vozidlo nebylo nalezeno.');
-        records[id]={id,...fields,photo:photo??records[id]?.photo};
+        records[id]={id,mapIcon:records[id]?.mapIcon??'sedan',...fields,photo:photo??records[id]?.photo};
         return;
       }
       const employee=employeeDirectory(s,users).find(entry=>entry.id===id&&entry.role==='driver');

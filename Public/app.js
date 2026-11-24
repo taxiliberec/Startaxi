@@ -768,7 +768,10 @@ function renderDriverMap(){
  renderTiles(map.querySelector('.map-tiles'),'driver',level,x,y,w,h);
  const markers=stops.map(([,symbol,color,label],index)=>{
    const point=points[index];
-   return '<span class="marker stop-marker '+color+'" style="left:'+(point.x-x)+'px;top:'+(point.y-y)+'px" role="img" aria-label="'+label+'">'+icon(symbol)+'<small>'+label+'</small></span>';
+   const driver=drivers.find(d=>d.id===actor);
+   const content=symbol==='taxi'?carImage(vehicleById(driver?.vehicleId)?.mapIcon):icon(symbol);
+   const caption=symbol==='taxi'?esc(driver?.lastName||driver?.name||label):label;
+   return '<span class="marker stop-marker '+color+'" style="left:'+(point.x-x)+'px;top:'+(point.y-y)+'px" role="img" aria-label="'+label+'">'+content+'<small>'+caption+'</small></span>';
  }).join('');
  if(markers!==lastDriverMapMarkers){
    map.querySelector('.map-markers').innerHTML=markers;
@@ -804,7 +807,7 @@ function renderMap(){
    const label=d.name+' · '+(j?statusText[j.status]:status)+(p.accuracy!=null?' · ±'+Math.round(p.accuracy)+' m':'');
    const markerPosition='left:'+(point.x-x)+'px;top:'+(point.y-y)+'px';
    const vehicle=vehicleById(d.vehicleId);
-   const marker='<button type="button" '+(can('assign')?'':'disabled ')+'class="marker '+color+(selected===d.id?' selected':'')+'" style="'+markerPosition+'" data-car="'+esc(d.id)+'" title="'+esc(label)+'" aria-label="'+esc(label)+'" aria-pressed="'+(selected===d.id)+'">'+icon('taxi')+'</button>';
+   const marker='<button type="button" '+(can('assign')?'':'disabled ')+'class="marker '+color+(selected===d.id?' selected':'')+'" style="'+markerPosition+'" data-car="'+esc(d.id)+'" title="'+esc(label)+'" aria-label="'+esc(label)+'" aria-pressed="'+(selected===d.id)+'">'+carImage(vehicle?.mapIcon)+'</button>';
    return marker+'<div class="map-driver-label" style="'+markerPosition+'"><strong>'+esc(d.lastName||d.name)+'</strong>'+vehicleLink(vehicle)+'</div>';
  }).join('')+state.jobs.flatMap(j=>{
    if(j.status==='cancelled') return [];
@@ -1366,6 +1369,17 @@ function fillDefaultPermissions(){
 fillDefaultPermissions();
 employeeForm.elements.role.addEventListener('change',fillDefaultPermissions);
 const vehicleById=id=>vehicles.find(vehicle=>vehicle.id===id);
+const carShapes={
+ sedan:['M2 15l2-5 6-1 4-5h8l6 6 6 2v6H2z','#ffe07b'],
+ estate:['M2 16l2-9 16-2 7 5 7 2v6H2z','#9dd6fc'],
+ suv:['M2 16V8l4-4h15l7 6 5 1 1 7H2z','#a9dbc4'],
+ van:['M2 18V4h20l6 7 5 2v5z','#f4b585'],
+ hatch:['M4 18l-2-6 5-7h12l7 6 5 2v5z','#d5b9f4'],
+};
+function carImage(type){
+ const [body,color]=carShapes[type]??carShapes.sedan;
+ return '<svg viewBox="0 0 36 23" aria-hidden="true" class="car-image"><path d="'+body+'" fill="'+color+'" stroke="#182739" stroke-width="1.5"/><path d="M13 7h6l4 4H10z" fill="#324858"/><g fill="#172536" stroke="#fff" stroke-width="1.4"><circle cx="9" cy="18" r="3.5"/><circle cx="26" cy="18" r="3.5"/></g></svg>';
+}
 const vehicleName=vehicle=>[vehicle.make,vehicle.model].filter(Boolean).join(' ')||'Vozidlo '+vehicle.id.slice(0,6);
 const makeLogos=new Map([
  ['skoda','skoda'],['volkswagen','volkswagen'],['vw','volkswagen'],['toyota','toyota'],
@@ -1414,8 +1428,13 @@ function renderFleetSettings(){
      '<button type="button" data-remove-vehicle="'+esc(vehicle.id)+'">Odstranit vozidlo</button></div></div>';
  }).join('')||'<p>Zatím nejsou přidaná žádná vozidla.</p>';
 }
+vehicleForm.elements.mapIcon.addEventListener('change',()=>{
+ $('#map-icon-preview').innerHTML=carImage(vehicleForm.elements.mapIcon.value);
+});
 function editVehicle(vehicle){
  vehicleForm.reset();
+ vehicleForm.elements.mapIcon.value=vehicle?.mapIcon??'sedan';
+ $('#map-icon-preview').innerHTML=carImage(vehicleForm.elements.mapIcon.value);
  vehicleForm.dataset.id=vehicle?.id??'';
  vehicleForm.elements.make.value=vehicle?.make??'';
  vehicleForm.elements.model.value=vehicle?.model??'';
@@ -1489,7 +1508,7 @@ for(const [form,path,dialog,message] of [
      const payload={id:form.dataset.id};
      if(form===vehicleForm){
        const {make,model,photo,removePhoto}=form.elements;
-       Object.assign(payload,{make:make.value,model:model.value});
+       Object.assign(payload,{make:make.value,model:model.value,mapIcon:form.elements.mapIcon.value});
        if(photo.files.length) payload.photo=await prepareVehiclePhoto(photo.files[0]);
        else if(removePhoto.checked) payload.photo='';
      }else payload.vehicleId=form.dataset.vehicleId;
