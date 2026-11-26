@@ -1,1 +1,3 @@
 Adresní místa Liberce pocházejí z veřejného exportu RÚIAN (ČÚZK) k 31. 10. 2026. Zdroj: https://vdp.cuzk.gov.cz/vymenny_format/csv/20261031_OB_563889_ADR.csv.zip . Řádek obsahuje ulici (případně část obce), číslo domovní, číslo orientační s písmenem, PSČ a polohu WGS84 převedenou z EPSG:5514. Index se přibaluje k serveru při sestavení.
+
+Soubor street-centres.json obsahuje body v polovině délky linií ulic obce Liberec (563889) z vrstvy Ulice RÚIAN, https://ags.cuzk.cz/arcgis/rest/services/RUIAN/MapServer/4 . Body leží na geometrii ulice, vzdálenosti úseků zohledňují zeměpisnou šířku.

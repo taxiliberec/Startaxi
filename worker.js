@@ -214,7 +214,7 @@ function houseAddress({properties:p,geometry}){
 
 const ruianBase='https://ags.cuzk.cz/arcgis/rest/services/RUIAN/MapServer/';
 const liberecCode=563889;
-const foldStreet=value=>value.normalize('NFD').replace(/\p{M}/gu,'').toLocaleLowerCase('cs').replace(/\s+/g,' ').trim();
+
 
 async function ruianQuery(layer,params){
   const endpoint=new URL(layer+'/query',ruianBase);
@@ -225,44 +225,7 @@ async function ruianQuery(layer,params){
   if(!Array.isArray(features)) throw Error('Invalid RÚIAN response');
   return features;
 }
-const streetsByKey=new Map();
-for(const [street,house,orientation,zip,lat,lng] of addressRows){
-  const key=foldStreet(street);
-  if(!streetsByKey.has(key)) streetsByKey.set(key,[]);
-  streetsByKey.get(key).push({street,house,orientation,zip,lat,lng});
-}
-function liberecAddresses(address){
-  const [line,city]=foldStreet(address).split(',').map(part=>part.trim());
-  if(city&&!/^(?:\d{3}\s?\d{2}\s+)?liberec\b/.test(city)) return [];
-  const query=line.replace(/\s+liberec$/,'').replace(/\s*\/\s*/g,'/');
-  const parts=query.match(/^(.+?)\s+((?:ev\.\s*)?\d+[a-z]?)(?:\/(\d*[a-z]?))?$/);
-  const street=parts?.[1]??query;
-  const number=parts?.[2], orientation=parts?.[3];
-  const hits=[];
-  for(const [key,rows] of streetsByKey){
-    if(!key.startsWith(street)) continue;
-    for(const row of rows){
-      let rank=0;
-      if(number){
-        if(orientation!==undefined){
-          if(row.house===number&&row.orientation===orientation) rank=0;
-          else if(row.house===number&&row.orientation.startsWith(orientation)) rank=1;
-          else if(orientation&&row.orientation===orientation) rank=2;
-          else continue;
-        }else if(row.house!==number&&row.orientation!==number){
-          if(!row.house.startsWith(number)&&!row.orientation.startsWith(number)) continue;
-          rank=1;
-        }
-      }
-      hits.push({row,rank});
-    }
-  }
-  hits.sort((a,b)=>a.rank-b.rank||a.row.street.localeCompare(b.row.street,'cs')||parseInt(a.row.house)-parseInt(b.row.house));
-  return hits.map(({row:r,rank})=>({
-    address:r.street+' '+r.house+(r.orientation?'/'+r.orientation:'')+', '+r.zip.slice(0,3)+' '+r.zip.slice(3)+' Liberec',
-    point:{lat:r.lat,lng:r.lng},...(rank===2?{approximate:true}:{})
-  }));
-}
+const liberecAddresses=createAddressIndex(addressRows,streetCentres);
 
 const base64url=bytes=>btoa(String.fromCharCode(...bytes)).replaceAll('+','-').replaceAll('/','_').replace(/=+$/,'');
 function pushConfig(env){
@@ -342,11 +305,11 @@ async function geocode(request,path){
   if(typeof address!=='string'||address.trim().length<3||address.length>200) return json({suggestions:[]});
   try{
     const suggestions=await liberecAddresses(address.trim());
-    if(suggestions.length) return json({suggestions});
+    if(suggestions) return json({suggestions});
   }catch{/* Photon remains available when RÚIAN cannot be reached. */}
   const endpoint=new URL('https://photon.komoot.io/api/');
   endpoint.search=new URLSearchParams({
-    q:address.trim(), lat:'50.7695', lon:'15.0514', countrycode:'CZ', limit:'15'
+    q:address.trim(), lat:'50.7695', lon:'15.0514', countrycode:'CZ', limit:'4'
   });
   endpoint.searchParams.append('layer','house');
   try{
@@ -767,6 +730,6 @@ export default {
     if(path==='/customer') return Response.redirect(new URL('/customer/',request.url),308);
     const asset=assets[path==='/'?'/index.html':path==='/customer/'?'/customer/index.html':path];
     if(!Array.isArray(asset)) return new Response('Nenalezeno',{status:404});
-    return new Response(asset[2]?Uint8Array.from(atob(asset[1]),char=>char.charCodeAt(0)):asset[1],{headers:{'Content-Type':asset[0],'X-Content-Type-Options':'nosniff'}});
+    return new Response(asset[2]?Uint8Array.from(atob(asset[1]),char=>char.charCodeAt(0)):asset[1],{headers:{'Content-Type':asset[0],...(path.startsWith('/addresses/')?{'Cache-Control':'public, max-age=86400'}:{}),'X-Content-Type-Options':'nosniff'}});
   }
 };
