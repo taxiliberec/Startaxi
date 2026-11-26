@@ -64,6 +64,113 @@ function addLoyaltyReward(reward={}){
  container.append(row);
  $('#add-loyalty-reward').disabled=container.children.length>=10;
 }
+const promoKinds={free:'Jízda zdarma',percent:'Procentní sleva',amount:'Sleva v Kč'};
+function promoLevel(container,level={}){
+ const row=document.createElement('fieldset');
+ row.dataset.id=level.id||crypto.randomUUID();
+ row.className='promo-level';
+ row.innerHTML='<legend>Úroveň odměny</legend><div class="promo-fields"><label>Potřebný počet<input name="threshold" type="number" min="1" max="100000" required></label>'+
+  '<label>Odměna<select name="kind">'+Object.entries(promoKinds).map(([key,label])=>'<option value="'+key+'">'+label+'</option>').join('')+'</select></label>'+
+  '<label><span></span><input name="discount" type="number" min="1" required></label>'+
+  '<label>Počet zvýhodněných jízd<input name="uses" type="number" min="1" max="1000" required></label></div><button type="button">Odebrat úroveň</button>';
+ const field=name=>row.querySelector('[name='+name+']');
+ field('threshold').value=level.threshold??'';
+ field('uses').value=level.uses??1;
+ field('discount').value=level.discount??'';
+ field('kind').value=level.kind??'free';
+ const update=()=>{
+   const kind=field('kind').value,input=field('discount');
+   input.disabled=input.parentElement.hidden=kind==='free';
+   input.max=kind==='percent'?100:10000;
+   input.previousElementSibling.textContent=kind==='percent'?'Sleva (%)':'Sleva (Kč)';
+ };
+ field('kind').onchange=update;
+ update();
+ row.querySelector('button').onclick=()=>{if(container.children.length>1) row.remove();else notify('Promo akce potřebuje alespoň jednu úroveň.');};
+ container.append(row);
+}
+function promoDraft(campaign={}){
+ const drafts=$('#promo-drafts');
+ const card=document.createElement('fieldset');
+ card.className='promo-draft';
+ card.dataset.id=campaign.id||crypto.randomUUID();
+ card.dataset.version=campaign.version??0;
+ card.innerHTML='<legend>Pravidla promoakce</legend><label>Název promoakce<input name="promoName" maxlength="60" required></label>'+
+  '<div class="promo-fields"><label>Platí od<input name="starts" type="date" required></label><label>Platí do (volitelné)<input name="ends" type="date"></label>'+
+  '<label>Hranice podle<select name="unit"><option value="points">Bodů</option><option value="rides">Dokončených jízd</option></select></label></div>'+
+  '<div class="levels"></div><div class="actions"><button type="button" data-level>Přidat úroveň</button><button type="button" data-discard>Zrušit úpravu</button></div>';
+ const set=(name,value)=>card.querySelector('[name='+name+']').value=value;
+ set('promoName',campaign.name||'');set('starts',campaign.starts||day());set('ends',campaign.ends||'');set('unit',campaign.unit||'points');
+ const levels=card.querySelector('.levels');
+ for(const l of campaign.levels||[{}]) promoLevel(levels,l);
+ card.querySelector('[data-level]').onclick=()=>promoLevel(levels);
+ card.querySelector('[data-discard]').onclick=()=>{card.remove();if(!drafts.children.length) promoDraft();syncPromoButton();};
+ card.dataset.pristine=String(!campaign.id);
+ card.oninput=()=>{card.dataset.pristine='false';};
+ drafts.append(card);
+ syncPromoButton();
+ return card;
+}
+function syncPromoButton(){
+ const drafts=$('#promo-drafts');
+ $('#promo-editor [type=submit]').textContent=Array.from(drafts.children).some(c=>Number(c.dataset.version))?'Uložit změny':drafts.children.length>1?'Vytvořit promoakce':'Vytvořit promoakci';
+}
+function renderPromotions(values){
+ if(!$('#promo-drafts').children.length) promoDraft();
+ const list=$('#promo-list'),campaigns=values.campaigns||[],today=day(),policy=values.loyalty;
+ const snapshot=JSON.stringify([campaigns,today,policy]);
+ if(list.dataset.snapshot===snapshot) return;
+ list.dataset.snapshot=snapshot;
+ list.replaceChildren();
+ for(const campaign of campaigns){
+   const card=document.createElement('details');
+   const status=campaign.ends&&campaign.ends<today?'Ukončená':campaign.starts>today?'Naplánovaná':
+    !policy?.enabled||(policy.starts&&policy.starts>today)||(policy.ends&&policy.ends<today)?'Program mimo provoz':'Aktivní';
+   const summary=document.createElement('summary');
+   summary.textContent=campaign.name+' · '+status;
+   const period=document.createElement('p');
+   period.textContent='Platnost '+campaign.starts+' – '+(campaign.ends||'bez omezení');
+   const rules=document.createElement('ol');
+   for(const level of campaign.levels){
+     const li=document.createElement('li');
+     li.textContent=level.threshold+(campaign.unit==='points'?' bodů':' jízd')+' · '+promoKinds[level.kind]+(level.kind==='free'?'':' '+level.discount+(level.kind==='percent'?' %':' Kč'))+' · počet jízd: '+level.uses;
+     rules.append(li);
+   }
+   const edit=document.createElement('button');edit.type='button';edit.textContent='Upravit pravidla';
+   edit.onclick=()=>{
+     const drafts=$('#promo-drafts');
+     const empty=drafts.children.length===1&&drafts.firstChild.dataset.pristine==='true';
+     if(empty) drafts.replaceChildren();
+     const existing=Array.from(drafts.children).find(item=>item.dataset.id===campaign.id);
+     const editor=existing||promoDraft(campaign);
+     editor.querySelector('input').focus();editor.scrollIntoView({block:'center'});
+   };
+   card.append(summary,period,rules,edit);list.append(card);
+ }
+ if(!campaigns.length) list.textContent='Zatím nejsou uloženy žádné promoakce.';
+}
+$('#promo-add').onclick=()=>promoDraft().querySelector('input').focus();
+$('#promo-editor').onsubmit=async event=>{
+ event.preventDefault();
+ const button=event.submitter||$('#promo-editor [type=submit]');
+ const generation=sessionGeneration;
+ const campaigns=Array.from($('#promo-drafts').children,card=>{
+   const value=name=>card.querySelector('[name='+name+']').value;
+   return {id:card.dataset.id,version:Number(card.dataset.version),name:value('promoName'),starts:value('starts'),ends:value('ends'),unit:value('unit'),
+     levels:Array.from(card.querySelector('.levels').children,row=>{
+       const level={id:row.dataset.id};
+       for(const name of ['threshold','kind','discount','uses']) level[name]=row.querySelector('[name='+name+']').value;
+       return level;
+     })};
+ });
+ button.disabled=true;
+ try{
+   const result=await api('customer-promotions',{campaigns});
+   if(generation!==sessionGeneration) return;
+   $('#promo-drafts').replaceChildren();receive(result);renderCustomerSettings();notify('Pravidla promoakcí byla uložena.');
+ }catch(error){if(generation===sessionGeneration) notify(error.message);}
+ finally{button.disabled=false;}
+};
 let customerTab='configuration',directoryRequest=0;
 function renderCustomerSettings(){
  const configuration=$('#customer-settings-form');
@@ -72,6 +179,8 @@ function renderCustomerSettings(){
  if(configuration.dataset.ready!==actor){
    configuration.dataset.ready=actor;
    for(const name of ['phone','email','hours']) configuration.elements[name].value=values[name]||'';
+   $('#legacy-hours').hidden=!values.hours;
+   for(let i=0;i<7;i++) configuration.elements['weekday'+i].value=values.weeklyHours?.[i]??'';
    configuration.elements.offers.value=(values.offers||[]).join('\n');
    configuration.elements.fareMode.value=values.fareMode??'automatic';
    configuration.elements.fixedFare.value=values.fixedFare??'';
@@ -81,10 +190,14 @@ function renderCustomerSettings(){
    loyalty.dataset.ready=actor;
    loyalty.elements.loyaltyEnabled.checked=values.loyalty?.enabled===true;
    loyalty.elements.pointsPerRide.value=values.loyalty?.pointsPerRide??1;
+   loyalty.elements.starts.value=values.loyalty?.starts||'';
+   loyalty.elements.ends.value=values.loyalty?.ends||'';
+   $('#legacy-rewards').hidden=!values.loyalty?.rewards?.length;
    $('#loyalty-rewards').replaceChildren();
    $('#add-loyalty-reward').disabled=false;
    for(const reward of values.loyalty?.rewards??[]) addLoyaltyReward(reward);
  }
+ renderPromotions(values);
  for(const button of document.querySelectorAll('[data-customer-tab]')){
    const active=button.dataset.customerTab===customerTab;
    button.classList.toggle('active',active);
@@ -285,6 +398,9 @@ function lockApp(){
    form.reset();
    delete form.dataset.ready;
  }
+ $('#promo-drafts').replaceChildren();
+ $('#promo-list').replaceChildren();
+ delete $('#promo-list').dataset.snapshot;
  customerTab='configuration';
  directoryRequest++;
  $('#customer-directory').tBodies[0].replaceChildren();
@@ -1268,7 +1384,8 @@ document.addEventListener('click',async e=>{
    $('#job-edit-title').textContent={cancelJob:'Zrušit zakázku',editPickupTime:'Upravit čas vyzvednutí',editJob:'Upravit údaje zakázky'}[d.jobEdit]+' č. '+job.id;
    $('#job-edit-submit').textContent=editing||timing?'Uložit':'Zrušit zakázku';
    for(const field of ['name','pickup','dropoff','note','scheduled']) form.elements[field].value=job[field]??'';
-   form.elements.price.value=job.payment&&!job.priceSet?'':(job.cents/100).toFixed(2);
+   $('#job-price-label').textContent=job.promoRule?'Cena před věrnostní slevou (Kč)':'Cena v Kč';
+   form.elements.price.value=job.payment&&!job.priceSet?'':((job.baseCents??job.cents)/100).toFixed(2);
    $('#job-editor').showModal();
    return;
  }
@@ -1796,7 +1913,10 @@ for(const form of [$('#customer-settings-form'),$('#customer-loyalty-form')]){
          const value=name=>row.querySelector('[name='+name+']').value;
          return {name:value('rewardName'),unit:value('rewardUnit'),threshold:value('rewardThreshold'),discount:value('rewardDiscount')};
        });
-       settings={loyalty:{enabled:form.elements.loyaltyEnabled.checked,pointsPerRide:fields.pointsPerRide,rewards}};
+       settings={loyalty:{enabled:form.elements.loyaltyEnabled.checked,pointsPerRide:fields.pointsPerRide,starts:fields.starts,ends:fields.ends,rewards}};
+     }
+     if(form.id==='customer-settings-form'){
+       settings.weeklyHours=Array.from({length:7},(_,i)=>fields['weekday'+i]);
      }
      const result=await api('customer-settings',settings);
      if(generation!==sessionGeneration||!live) return;
