@@ -428,13 +428,32 @@ async function handleApi(request,env,path){
       .sort((a,b)=>compare.compare(a.lastName,b.lastName)||compare.compare(a.firstName,b.firstName));
     return json(customers);
   }
+  if(path==='customer-promotions'&&request.method==='POST'){
+    if(!isOwner(actor)) throw new AccessDenied('Přístup zamítnut.');
+    const input=await decode(request,16000);
+    if(!Array.isArray(input.campaigns)||!input.campaigns.length) throw Error('Přidejte promoakci.');
+    const changes=input.campaigns.map(item=>({campaign:promoCampaign(item),version:item.version??0}));
+    const {state,revision}=await updateState(env.DB,s=>{
+      checkSession(s);
+      const settings=s.customerSettings??={};
+      const campaigns=settings.campaigns??=[];
+      for(const {campaign,version} of changes){
+        const index=campaigns.findIndex(item=>item.id===campaign.id);
+        if((campaigns[index]?.version??0)!==version) throw Error('Pravidla se mezitím změnila. Otevřete akci znovu.');
+        const updated={...campaign,version:version+1};
+        if(index<0) campaigns.push(updated);
+        else campaigns[index]=updated;
+      }
+    });
+    return json(view(state,actor,revision,users));
+  }
   if(path==='customer-settings'&&request.method==='POST'){
     if(!isOwner(actor)) throw new AccessDenied('Přístup zamítnut.');
     const input=await decode(request);
     const {state,revision}=await updateState(env.DB,s=>{
       checkSession(s);
-      const {phone,email,hours,offers,fareMode,fixedFare,loyalty}=s.customerSettings||{};
-      s.customerSettings=customerSettings({phone,email,hours,offers:(offers??[]).join('\n'),fareMode,fixedFare,loyalty,...input});
+      const {phone,email,hours,weeklyHours,offers,fareMode,fixedFare,loyalty,campaigns}=s.customerSettings||{};
+      s.customerSettings={campaigns,...customerSettings({phone,email,hours,weeklyHours,offers:(offers??[]).join('\n'),fareMode,fixedFare,...input,loyalty:input.loyalty?{...loyalty,...input.loyalty,rewards:input.loyalty.rewards??loyalty?.rewards??[]}:loyalty})};
     });
     return json(view(state,actor,revision,users));
   }
@@ -693,6 +712,14 @@ async function handleApi(request,env,path){
       if(action.type==='assign'&&!activePosition(s,action.driver,Date.now())) throw Error('Řidič nesdílí aktuální polohu.');
       const previous=s.positions[actor];
       if(change(s,actor,action,now)===false) return false;
+      if(action.type==='complete'){
+        const job=s.jobs.find(job=>job.id===action.id);
+        const settings=s.customerSettings;
+        if(job?.customerId&&settings?.loyalty?.enabled&&inPromoPeriod(settings.loyalty,day(now))){
+          job.loyaltyPoints=settings.loyalty.pointsPerRide;
+          job.promoEarned=(settings.campaigns||[]).filter(c=>inPromoPeriod(c,day(now))).map(c=>c.id);
+        }
+      }
       if(action.type==='createOwn'&&allows(permissionsFor(s,actor),'gps')) (s.openShifts??={})[actor]=true;
       if(action.type==='assign'&&allows(permissionsFor(s,action.driver),'gps')) (s.openShifts??={})[action.driver]=true;
       if(action.type==='close'||action.type==='shiftEnd'){

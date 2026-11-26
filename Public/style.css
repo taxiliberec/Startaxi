@@ -214,3 +214,10 @@
 .assignment-status [data-customer-decision="confirmCustomerRide"]{background:#137342;border-color:#105c35}
 .assignment-status [data-customer-decision="rejectCustomerRide"]{background:#ad2935;border-color:#93222d}
 .assignment-status [data-customer-decision]:hover{filter:brightness(.9)}
+
+.weekly-hours,.promo-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,155px),1fr));gap:12px}
+#promo-editor,.promo-list{margin-top:24px;border-top:1px solid var(--line);padding-top:20px}
+#promo-drafts,.levels,#promo-list{display:grid;gap:12px}
+.promo-draft,.promo-level{min-width:0;border:1px solid #ced7e3;border-radius:12px;padding:16px;display:grid;gap:12px}
+.promo-level{background:#f5f7fa}.promo-list details{padding:14px;border-radius:12px;background:#e9eef5}
+.promo-list summary{cursor:pointer;font-weight:700}.promo-list p,.promo-list ol{margin:12px 0}

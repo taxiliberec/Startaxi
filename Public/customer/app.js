@@ -322,7 +322,7 @@ async function refreshFare(){
     const {cents,rewards=[],discountCents=0}=await api('fare',payload,lookup.signal);
     if(lookup.signal.aborted||!panel.open||page!=='booking') return;
     selector.replaceChildren(new Option('Bez odměny',''));
-    for(const reward of rewards) selector.append(new Option(reward.name+' · sleva '+currency.format(reward.discount),reward.key));
+    for(const reward of rewards) selector.append(new Option(reward.name+' · '+rewardDescription(reward),reward.key));
     if(rewards.some(reward=>reward.key===selected)) selector.value=selected;
     selector.disabled=!rewards.length;
     $('#booking-reward').hidden=!rewards.length;
@@ -364,6 +364,10 @@ async function refreshRides(){
   if(latest) lastRide.textContent='Jízda č. '+latest.id+' · '+statuses[latest.status];
   if(page==='history'&&panel.open) renderRides(rides);
 }
+function rewardDescription(reward){
+  const value=reward.kind==='free'?'Jízda zdarma':reward.kind==='percent'?'Sleva '+reward.discount+' %':'Sleva '+currency.format(reward.discount);
+  return value+(reward.kind?' · zbývá jízd: '+reward.remaining:'');
+}
 function renderInfo(info,target){
   target.replaceChildren();
   if(target.id==='offer-list'){
@@ -375,10 +379,10 @@ function renderInfo(info,target){
       const list=element('ul','');
       for(const reward of rewards){
         const threshold=reward.threshold+(reward.unit==='points'?' bodů':' jízd');
-        list.append(element('li',reward.name+' · '+currency.format(reward.discount)+' sleva · '+(reward.available?'Dostupná':threshold)));
+        list.append(element('li',reward.name+' · '+rewardDescription(reward)+' · '+(reward.available?'Dostupná':reward.kind?reward.progress+' / '+threshold:threshold)));
       }
       target.append(list);
-      target.append(element('p','Při využití bodů se použité jízdy odečítají také z odměn za celé jízdy.'));
+      if(rewards.some(r=>!r.kind)) target.append(element('p','Při využití bodů se použité jízdy odečítají také z odměn za celé jízdy.'));
     }
     if(info.offers?.length){
       const list=element('ul','');
@@ -387,7 +391,7 @@ function renderInfo(info,target){
     }else if(!info.loyalty) target.append(element('p','Momentálně nemáte žádné akce.'));
     return;
   }
-  if(!info.phone&&!info.email&&!info.hours) target.append(element('p','Kontakty zatím nejsou vyplněné.'));
+  if(!info.phone&&!info.email&&!info.hours&&!info.weeklyHours?.some(Boolean)) target.append(element('p','Kontakty zatím nejsou vyplněné.'));
   if(info.phone){
     const link=element('a',info.phone);
     link.href='tel:'+info.phone.replace(/[^+0-9]/g,'');
@@ -402,7 +406,11 @@ function renderInfo(info,target){
     line.append(link);
     target.append(line);
   }
-  if(info.hours) target.append(element('p','Provozní doba '+info.hours));
+  if(info.weeklyHours?.some(Boolean)){
+    target.append(element('h3','Provozní doba'));
+    const days=['Pondělí','Úterý','Středa','Čtvrtek','Pátek','Sobota','Neděle'];
+    info.weeklyHours.forEach((hours,i)=>target.append(element('p',days[i]+' · '+(hours||'Neuvedeno'))));
+  }else if(info.hours) target.append(element('p','Provozní doba '+info.hours));
 }
 async function openPage(name){
   if(!account) return;

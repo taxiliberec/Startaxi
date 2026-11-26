@@ -42,6 +42,11 @@ export function allows(permissions,key){
   };
   return permissions.includes(key)&&(prerequisites[key]??[]).every(required=>permissions.includes(required));
 }
+export function promotionDiscount(cents,rule){
+  if(rule.kind==='free') return cents;
+  if(rule.kind==='percent') return Math.round(cents*rule.discount/100);
+  return Math.min(cents,rule.discount*100);
+}
 export const assignmentTimeout=60_000;
 export const actionPermissions = Object.freeze({
   create:'create',assign:'assign',requeue:'assign',editPickupTime:'edit',editJob:'edit',cancelJob:'cancel',
@@ -121,7 +126,11 @@ export function change(s,actor,a,now=Date.now()){
         requireThat(pickup.trim()===job.pickup||validPoint(pickupPoint),'Vyberte adresu vyzvednutí se souřadnicemi.');
         requireThat(dropoff.trim()===job.dropoff||validPoint(target),'Vyberte adresu doručení se souřadnicemi.');
         if(job.customerId) job.priceSet=true;
-        Object.assign(job,{name:name.trim(),pickup:pickup.trim(),dropoff:dropoff.trim(),note,cents,
+        if(job.promoRule){
+          job.baseCents=cents;
+          job.rewardDiscountCents=promotionDiscount(cents,job.promoRule);
+        }
+        Object.assign(job,{name:name.trim(),pickup:pickup.trim(),dropoff:dropoff.trim(),note,cents:job.promoRule?cents-job.rewardDiscountCents:cents,
           pickupPoint:pickup.trim()===job.pickup?(pickupPoint??job.pickupPoint):pickupPoint,
           target:dropoff.trim()===job.dropoff?(target??job.target):target});
       }

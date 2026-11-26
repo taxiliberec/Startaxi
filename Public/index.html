@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="cs"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#101827"><link rel="manifest" href="/manifest.webmanifest"><link rel="icon" href="/taximetr.svg" type="image/svg+xml"><link rel="apple-touch-icon" href="/taximetr-192.png"><title>taximetr · Dispečink</title><link rel="stylesheet" href="/style.css?customer-workspace=1"><script type="module" src="/app.js?customer-workspace=1"></script></head>
-<body><header class="top" hidden><div class="brand"><img class="brand-logo" src="/taximetr-192.png" alt="taximetr"><div><b>taximetr</b><small>DISPEČERSKÝ SYSTÉM</small></div></div><nav aria-label="Hlavní navigace"><button data-page="dispatch"><i data-icon="grid"></i>Dispečink</button><button data-page="history"><i data-icon="chart"></i>Denní přehledy</button><button data-page="employees" hidden><i data-icon="person"></i>Zaměstnanci</button><button data-page="customers" hidden><i data-icon="taxi"></i>Zákaznická appka</button><button data-page="activity" hidden><i data-icon="list"></i>Majitel</button><button data-page="settings"><i data-icon="settings"></i>Nastavení</button><button data-page="driver" hidden><i data-icon="taxi"></i>Moje vozidlo</button></nav><div class="account"><span id="sync-status" role="status"></span><span id="connection">Ukázková data</span><button id="login" aria-label="Přihlášení">Přihlásit se</button></div></header>
+<body><header class="top" hidden><div class="brand"><img class="brand-logo" src="/taximetr-192.png" alt="taximetr"><div><b>taximetr</b><small>DISPEČERSKÝ SYSTÉM</small></div></div><nav aria-label="Hlavní navigace"><button data-page="dispatch"><i data-icon="grid"></i>Dispečink</button><button data-page="history"><i data-icon="chart"></i>Denní přehledy</button><button data-page="employees" hidden><i data-icon="person"></i>Zaměstnanci</button><button data-page="customers" hidden><i data-icon="taxi"></i>Zákaznická aplikace</button><button data-page="activity" hidden><i data-icon="list"></i>Majitel</button><button data-page="settings"><i data-icon="settings"></i>Nastavení</button><button data-page="driver" hidden><i data-icon="taxi"></i>Moje vozidlo</button></nav><div class="account"><span id="sync-status" role="status"></span><span id="connection">Ukázková data</span><button id="login" aria-label="Přihlášení">Přihlásit se</button></div></header>
 <main id="app" hidden><div class="intro"><div><p class="eyebrow"><span></span> PROVOZ TAXI LIBEREC</p><h1 id="title">Dispečink</h1><p id="subtitle">Spravujte zakázky a sledujte polohu vozidel v Liberci.</p></div><div id="vehicle-status" class="vehicle-status" role="group" aria-label="Aktivní řidiči" hidden></div><div class="today"><i data-icon="calendar"></i><span id="today"></span></div></div><div id="stats" class="stats"></div>
 <div id="dispatch" class="workspace"><section class="panel formpanel" data-permission="create"><div class="panelhead"><span class="headicon" data-icon="plus"></span><div><h2>Nová zakázka</h2><p>Údaje z telefonické objednávky</p></div></div><form id="booking"><label>Jméno a příjmení<input name="name" required maxlength="121" placeholder="Např. Jan Novák"></label><label>Místo vyzvednutí<div class="field"><i data-icon="pin"></i><input name="pickup" required maxlength="200" placeholder="Ulice a číslo, Liberec"></div></label><label>Místo doručení<div class="field"><i data-icon="flag"></i><input name="dropoff" required maxlength="200" placeholder="Cílová adresa"></div></label><label>Pozdější čas vyzvednutí <small>Volitelné</small><input type="datetime-local" name="scheduled"></label><label>Poznámka <small>Volitelné</small><textarea name="note" maxlength="1000" placeholder="Např. vyzvednout u hlavního vchodu" rows="2"></textarea></label><label>Cena cesty<div class="field suffix"><input name="price" type="number" min="0" max="100000" step=".01" required placeholder="0"><span>Kč</span></div></label><button class="primary" type="submit"><i data-icon="plus"></i> Vytvořit zakázku</button></form></section>
 <section class="panel mappanel" data-permission="fleetMap"><div class="panelhead"><span class="headicon" data-icon="map"></span><div><h2>Mapa vozidel</h2><p>Liberec a okolí</p></div><label class="map-style">Podklad<select id="fleet-map-style"></select></label></div><div id="map" aria-label="Mapa Liberce"><div id="tiles"></div><div id="markers"></div><div class="maptools"><button data-zoom="1" aria-label="Přiblížit">+</button><button data-zoom="-1" aria-label="Oddálit">−</button><button data-zoom="0" aria-label="Vycentrovat">◎</button></div><div class="mapcredit">© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a></div></div><div class="legend"><span><em class="green"></em> Volný</span><span><em class="red"></em> Obsazený</span><span><em class="orange"></em> Blízko cíle</span><span><em class="pickup-marker"></em> Vyzvednutí</span><span><em class="destination-marker"></em> Doručení</span><span class="maphint" id="maphint">Vyberte volné vozidlo</span></div></section>
@@ -50,15 +50,16 @@
   <nav class="tabs customer-tabs" aria-label="Správa zákaznické aplikace">
     <button type="button" data-customer-tab="configuration" class="active" aria-pressed="true">Nastavení aplikace</button>
     <button type="button" data-customer-tab="loyalty" aria-pressed="false">Věrnostní program</button>
-    <button type="button" data-customer-tab="directory" aria-pressed="false">Seznam zákazníků</button>
+    <button type="button" data-customer-tab="directory" aria-pressed="false">Seznam uživatelů</button>
   </nav>
   <section class="detail" data-customer-pane="configuration">
     <p class="actions"><a href="https://startaxi-1.onrender.com/" target="_blank" rel="noopener">Otevřít zákaznickou aplikaci</a></p>
     <form id="customer-settings-form">
-      <label>Telefon na dispečink<input name="phone" type="tel" maxlength="32"></label>
-      <label>Kontaktní e-mail<input name="email" type="email" maxlength="254"></label>
-      <label>Provozní doba<input name="hours" maxlength="200"></label>
-      <label>Akce a kupóny (jedna položka na řádek)<textarea name="offers" maxlength="2000" rows="4"></textarea></label>
+      <label>E-mail majitele<input name="email" type="email" maxlength="254"></label>
+      <label>Telefonní číslo dispečinku<input name="phone" type="tel" maxlength="32"></label>
+      <label id="legacy-hours" hidden>Dosavadní provozní doba<input name="hours" maxlength="200"></label>
+      <fieldset><legend>Provozní doba</legend><div class="weekly-hours"><label>Pondělí<input name="weekday0" maxlength="100" placeholder="Např. 8:00–18:00"></label><label>Úterý<input name="weekday1" maxlength="100" placeholder="Např. 8:00–18:00"></label><label>Středa<input name="weekday2" maxlength="100" placeholder="Např. 8:00–18:00"></label><label>Čtvrtek<input name="weekday3" maxlength="100" placeholder="Např. 8:00–18:00"></label><label>Pátek<input name="weekday4" maxlength="100" placeholder="Např. 8:00–18:00"></label><label>Sobota<input name="weekday5" maxlength="100" placeholder="Např. 8:00–18:00"></label><label>Neděle<input name="weekday6" maxlength="100" placeholder="Např. 8:00–18:00"></label></div></fieldset>
+      <label>Aktuální slevové kupóny a akce (jedna položka na řádek)<textarea name="offers" maxlength="2000" rows="4"></textarea></label>
       <label>Cena zákaznických jízd po Liberci<select name="fareMode">
         <option value="manual">Cenu zadává dispečink</option>
         <option value="automatic">Automatické počítání ceny</option>
@@ -72,11 +73,16 @@
   <section class="detail" data-customer-pane="loyalty" hidden>
     <form id="customer-loyalty-form">
         <label><input name="loyaltyEnabled" type="checkbox"> Zapnout věrnostní program</label>
+        <div class="promo-fields"><label>Začátek programu<input name="starts" type="date"></label><label>Expirace programu (volitelné)<input name="ends" type="date"></label></div>
         <label>Body za dokončenou jízdu<input name="pointsPerRide" type="number" min="1" max="1000" step="1" value="1" required></label>
-        <div id="loyalty-rewards"></div>
-        <button id="add-loyalty-reward" type="button">Přidat úroveň odměny</button>
+        <div id="legacy-rewards" hidden><h3>Dosavadní odměny</h3><div id="loyalty-rewards"></div>
+        <button id="add-loyalty-reward" type="button">Přidat další dosavadní odměnu</button></div>
       <button class="primary" type="submit">Uložit věrnostní program</button>
     </form>
+    <form id="promo-editor"><h2>Editor promoakcí</h2><div id="promo-drafts"></div>
+      <div class="actions"><button type="button" id="promo-add">Přidat další promoakci</button><button type="submit" class="primary">Vytvořit promoakci</button></div>
+    </form>
+    <section class="promo-list"><h2>Uložené promoakce</h2><div id="promo-list"></div></section>
   </section>
   <section class="detail" data-customer-pane="directory" hidden>
     <p id="customer-directory-status" role="status"></p>
@@ -179,7 +185,7 @@
       <label>Jméno a příjmení<input name="name" required maxlength="121"></label>
       <label>Vyzvednutí<input name="pickup" required maxlength="200"></label>
       <label>Doručení<input name="dropoff" required maxlength="200"></label>
-      <label>Cena v Kč<input name="price" required type="number" min="0" max="100000" step=".01"></label>
+      <label><span id="job-price-label">Cena v Kč</span><input name="price" required type="number" min="0" max="100000" step=".01"></label>
       <label>Poznámka<textarea name="note" maxlength="1000" rows="2"></textarea></label>
     </fieldset>
     <fieldset id="job-time" hidden><label>Čas vyzvednutí<input name="scheduled" type="datetime-local"></label></fieldset>
