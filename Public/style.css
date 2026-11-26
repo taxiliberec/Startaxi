@@ -205,3 +205,12 @@
 #driver-map .marker:has(.car-image) small { top: auto; bottom: calc(100% + 4px); }
 #map .marker .car-image, #driver-map .marker .car-image { width: 31px; height: 24px; flex-shrink: 0; }
 #map-icon-preview svg { width: 68px; height: 42px; }
+
+.employee-panels{display:grid;gap:16px}.employee-panels>.panel{background:#f0f3f8}.employee-panels>.panel:first-child{background:#e6ebf3}
+.employee-panels .employee{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.row-menu{position:relative}.row-menu summary{cursor:pointer;list-style:none;padding:10px;letter-spacing:2px}.row-menu>div{position:absolute;z-index:4;right:0;min-width:160px;background:white;padding:6px;border:1px solid var(--line);border-radius:9px;box-shadow:0 6px 20px #172b461a}.row-menu button{display:block;width:100%;text-align:left;border:0}
+
+.assignment-status [data-customer-decision]{color:white}
+.assignment-status [data-customer-decision="confirmCustomerRide"]{background:#137342;border-color:#105c35}
+.assignment-status [data-customer-decision="rejectCustomerRide"]{background:#ad2935;border-color:#93222d}
+.assignment-status [data-customer-decision]:hover{filter:brightness(.9)}

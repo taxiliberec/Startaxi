@@ -1,6 +1,7 @@
 import {isOwner,allows,availablePermissions,defaultPermissions,permissionLabels,day,busy,meters,validPoint,assignmentTimeout} from './model.js';
 const $=sel=>document.querySelector(sel);
 const icons={
+ settings:'<path d="M3 6h18M3 12h18M3 18h18"/><circle cx="8" cy="6" r="2"/><circle cx="16" cy="12" r="2"/>',
  person:'<circle cx="12" cy="5" r="2"/><path d="M5 10h14m-7 0v5m0 0-4 6m4-6 4 6"/>',
  check:'<path d="m5 12 4 4L19 6"/>',
  taxi:'<path d="M5 17v2m14-2v2M3 12l2-2 2-5h10l2 5 2 2v5H3zm2-2h14M7 14h1m8 0h1M10 5V3h4v2"/>',
@@ -338,8 +339,8 @@ function render(){
  $('#settings').hidden=page!=='settings';
  $('#customers').hidden=page!=='customers'||!isOwner(actor);
  $('#employees').hidden=page!=='employees'||!isOwner(actor);
- if(page==='settings'){renderOwners();renderFleetSettings();}
- if(page==='employees'&&isOwner(actor)) renderUserSettings();
+ if(page==='settings'){renderOwners();renderProfileVehicle();}
+ if(page==='employees'&&isOwner(actor)){renderUserSettings();renderFleetSettings();}
  if(page==='customers'&&isOwner(actor)) renderCustomerSettings();
  document.querySelectorAll('[data-permission]').forEach(el=>el.hidden=!can(el.dataset.permission));
  $('#vehicle-status').hidden=page!=='dispatch'||!can('fleetMap');
@@ -544,7 +545,7 @@ function renderActivity(){
  if(focusId) document.getElementById(focusId)?.focus({preventScroll:true});
 }
 function jobRoute(j){
- return '<div class="route"><span>'+icon('pin')+esc(j.pickup)+'</span><span>'+icon('flag')+esc(j.dropoff)+'</span></div>';
+ return '<div class="route"><span>'+icon('pin')+esc(j.pickup)+'</span>'+(j.stops||[]).map((stop,index)=>'<span>'+icon('pin')+'Mezizastávka '+(index+1)+' · '+esc(stop)+'</span>').join('')+'<span>'+icon('flag')+esc(j.dropoff)+'</span></div>';
 }
 function renderQueue(){
  if(!can('dispatchJobs')) return;
@@ -564,8 +565,8 @@ function renderQueue(){
    '</div><strong>'+(j.payment&&!j.priceSet?'Čeká na cenu':cash(j.cents))+'</strong></div></button>'+
    (j.status==='waiting'&&j.customerOrder&&!j.confirmedAt&&(can('edit')||can('cancel'))
      ?'<div class="assignment-status">'+
-       (can('edit')?'<button type="button" data-customer-decision="confirmCustomerRide" data-id="'+j.id+'">Potvrdit objednávku</button>':'')+
-       (can('cancel')?'<button type="button" data-customer-decision="rejectCustomerRide" data-id="'+j.id+'">Odmítnout objednávku</button>':'')+
+       (can('edit')?'<button type="button" data-customer-decision="confirmCustomerRide" data-id="'+j.id+'">Přijmout</button>':'')+
+       (can('cancel')?'<button type="button" data-customer-decision="rejectCustomerRide" data-id="'+j.id+'">Odmítnout</button>':'')+
        '</div>':'')+
    (j.status==='assigned'?'<div class="assignment-status"><span data-assignment-countdown="'+j.id+'"></span>'+
      (can('assign')?'<button type="button" data-requeue="'+j.id+'" hidden>Vrátit k přeřazení</button>':'')+'</div>':'')+'</div>').join('')||'<p class="empty">Žádné zakázky</p>';
@@ -609,7 +610,7 @@ function navigate(address){
 function driverNavigationUrl(job,toDropoff){
  const point=toDropoff?job.target:job.pickupPoint;
  const address=validPoint(point)?point.lat+','+point.lng:toDropoff?job.dropoff:job.pickup;
- return navigate(address);
+ return navigate(address)+(toDropoff&&job.stops?.length?'&waypoints='+encodeURIComponent(job.stops.join('|')):'');
 }
 function driverActions(job){
  const tile=(action,label,symbol,style)=>'<button type="button" class="ride-tile '+style+
@@ -1413,19 +1414,23 @@ function showVehicle(id){
  $('#vehicle-profile').showModal();
 }
 const vehicleForm=$('#vehicle-form'), driverVehicleForm=$('#driver-vehicle-form');
-function renderFleetSettings(){
+function renderProfileVehicle(){
  const vehicle=vehicleById(drivers.find(driver=>driver.id===actor)?.vehicleId);
  const own=$('#profile-vehicle');
  own.hidden=role!=='driver';
  own.innerHTML=vehicle?'Přiřazené vozidlo '+vehicleLink(vehicle):'Vozidlo nepřiřazeno';
+}
+function renderFleetSettings(){
  $('#fleet-settings').hidden=!isOwner(actor);
  if(!isOwner(actor)) return;
  $('#fleet-list').innerHTML=vehicles.map(vehicle=>{
    const driver=state.employees.find(employee=>employee.vehicleId===vehicle.id);
    const assignee=driver?[driver.firstName,driver.lastName].filter(Boolean).join(' ')||driver.username:'Nepřiřazeno';
    return '<div class="employee"><div><div class="vehicle-heading">'+vehicleLogo(vehicle)+vehicleLink(vehicle)+'</div><p>'+esc(assignee)+'</p></div>'+
-     '<div class="employee-actions"><button type="button" data-edit-vehicle="'+esc(vehicle.id)+'">Upravit</button>'+
-     '<button type="button" data-remove-vehicle="'+esc(vehicle.id)+'">Odstranit vozidlo</button></div></div>';
+     rowMenu(menuAction('edit-vehicle',vehicle.id,'Upravit')+
+       menuAction('choose-driver',vehicle.id,'Přiřadit řidiče')+
+       (driver?menuAction('unlink-driver',driver.id,'Odebrat řidiče'):'')+
+       menuAction('remove-vehicle',vehicle.id,'Odstranit'))+'</div>';
  }).join('')||'<p>Zatím nejsou přidaná žádná vozidla.</p>';
 }
 vehicleForm.elements.mapIcon.addEventListener('change',()=>{
@@ -1444,6 +1449,17 @@ function editVehicle(vehicle){
 }
 $('#add-vehicle').addEventListener('click',()=>editVehicle());
 $('#fleet-list').addEventListener('click',event=>{
+ const choose=event.target.closest('[data-choose-driver]');
+ if(choose){
+   const form=$('#fleet-driver-form');
+   form.dataset.vehicle=choose.dataset.chooseDriver;
+   form.dataset.previous=state.employees.find(user=>user.vehicleId===form.dataset.vehicle)?.id||'';
+   const options=state.employees.filter(user=>user.role==='driver'&&!user.inactive&&(!user.vehicleId||user.vehicleId===form.dataset.vehicle));
+   if(!options.length){notify('Žádný dostupný řidič.');return;}
+   form.elements.driver.replaceChildren(...options.map(user=>new Option(displayUserName(user),user.id,false,user.vehicleId===form.dataset.vehicle)));
+   $('#fleet-driver-editor').showModal();
+   return;
+ }
  const removal=event.target.closest('[data-remove-vehicle]');
  if(removal){
    const vehicle=vehicleById(removal.dataset.removeVehicle);
@@ -1580,14 +1596,41 @@ for(const selector of ['#employee-list','#owner-list']){
    }
  });
 }
+function menuAction(action,id,label){
+ return '<button type="button" data-'+action+'="'+esc(id)+'">'+label+'</button>';
+}
+function rowMenu(actions){
+ return '<details class="row-menu"><summary aria-label="Možnosti">•••</summary><div>'+actions+'</div></details>';
+}
+$('#fleet-driver-form').addEventListener('submit',event=>{
+ event.preventDefault();
+ const form=event.currentTarget;
+ void saveManagement(event.submitter,'vehicle-assignment',{id:form.elements.driver.value,vehicleId:form.dataset.vehicle,previousDriver:form.dataset.previous},'Řidič přiřazen.',()=>$('#fleet-driver-editor').close());
+});
+$('#employees').addEventListener('click',event=>{
+ const button=event.target.closest('[data-unlink-driver],[data-employee-status]');
+ if(!button) return;
+ if(button.dataset.unlinkDriver) void saveManagement(button,'vehicle-assignment',{id:button.dataset.unlinkDriver,vehicleId:''},'Přiřazení odebráno.');
+ else {
+   const employee=state.employees.find(user=>user.id===button.dataset.employeeStatus);
+   if(employee) void saveManagement(button,'employee-status',{id:employee.id,inactive:!employee.inactive},'Stav účtu uložen.');
+ }
+});
+permissionForm.elements.role.addEventListener('change',()=>{
+ const role=permissionForm.elements.role.value;
+ renderPermissionChoices($('#edit-permissions'),role,defaultPermissions(role));
+});
 function renderUserSettings(){
  $('#employees').hidden=!isOwner(actor);
  if(!isOwner(actor)) return;
  $('#employee-list').innerHTML=(state.employees||[]).map(employee=>
    '<div class="employee"><div><strong>'+esc([employee.firstName,employee.lastName].filter(Boolean).join(' ')||employee.username)+'</strong><p>'+roleLabel(employee.role)+' · '+esc(employee.username)+'</p>'+
-   (employee.role==='driver'?(vehicleLink(vehicleById(employee.vehicleId))||'<p>Vozidlo nepřiřazeno</p>'):'')+'</div><div class="employee-actions">'+
-   userManagementButtons(employee)+'<button type="button" data-employee="'+esc(employee.id)+'">Upravit oprávnění</button>'+
-   (employee.role==='driver'?'<button type="button" data-assign-vehicle="'+esc(employee.id)+'">Vybrat vozidlo</button>':'')+'</div></div>'
+   (employee.role==='driver'?(vehicleLink(vehicleById(employee.vehicleId))||'<p>Vozidlo nepřiřazeno</p>'):'')+(employee.inactive?'<p>Neaktivní účet</p>':'')+'</div>'+rowMenu(
+     menuAction('employee',employee.id,'Upravit profil')+
+     menuAction('employee-status',employee.id,employee.inactive?'Aktivovat':'Deaktivovat')+
+     (employee.role==='driver'?menuAction('assign-vehicle',employee.id,'Přiřadit vozidlo'):'')+
+     (employee.vehicleId?menuAction('unlink-driver',employee.id,'Odebrat vozidlo'):'')+
+     menuAction('remove-user',employee.id,'Vymazat profil'))+'</div>'
  ).join('')||'<p class="empty">Zatím nejsou vytvořené žádné účty.</p>';
 }
 $('#employee-list').addEventListener('click',event=>{
@@ -1597,13 +1640,16 @@ $('#employee-list').addEventListener('click',event=>{
  if(!employee) return;
  if(assignment){assignVehicle(employee);return;}
  permissionForm.dataset.id=employee.id;
+ for(const key of ['firstName','lastName','role','username']) permissionForm.elements[key].value=employee[key]??'';
+ permissionForm.elements.password.value='';
+ permissionForm.elements.password.required=!employee.configured;
  $('#permission-employee').textContent=[employee.firstName,employee.lastName].filter(Boolean).join(' ')||employee.username;
  renderPermissionChoices($('#edit-permissions'),employee.role,employee.permissions);
  $('#permission-editor').showModal();
 });
 for(const [form,path,message] of [
  [employeeForm,'employees','Účet zaměstnance byl vytvořen.'],
- [permissionForm,'employee-permissions','Oprávnění byla uložena.']
+ [permissionForm,'employee-profile','Profil byl uložen.']
 ]){
  form.addEventListener('submit',async event=>{
    event.preventDefault();

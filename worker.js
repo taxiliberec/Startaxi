@@ -98,7 +98,7 @@ function employeeDirectory(state,users){
     const fallback=drivers.find(driver=>driver.id===id)?.name;
     const [firstName='',lastName='']=(fallback||'').split(' ');
     return {...publicProfile(account??{id,firstName,lastName,username:id,...state.userNames?.[id]}),
-      configured:Boolean(account),role:employeeRole(state,id),permissions:permissionsFor(state,id),vehicleId:assignedVehicle(state,id)?.id};
+      configured:Boolean(account),inactive:Boolean(state.inactiveEmployees?.[id]),role:employeeRole(state,id),permissions:permissionsFor(state,id),vehicleId:assignedVehicle(state,id)?.id};
   }).sort((a,b)=>a.lastName.localeCompare(b.lastName,'cs')||a.firstName.localeCompare(b.firstName,'cs')||a.username.localeCompare(b.username));
 }
 const publicVehicle=({id,make,model,photo,mapIcon})=>({id,make,model,mapIcon:mapIcon??'sedan',hasPhoto:Boolean(photo)});
@@ -390,7 +390,7 @@ async function handleApi(request,env,path){
       attempts[bucket]={count:(previous?.count??0)+1,until:previous?.until??now+loginCooldown};
     });
     if(retry) return json({error:'Po šesti pokusech je přihlášení dočasně zablokované. Zkuste to za '+Math.ceil(retry/60)+' min.'},429,{'Retry-After':String(retry)});
-    const account=registeredAccounts(current).find(entry=>!current.removedUsers?.[entry.id]&&entry.username===login);
+    const account=registeredAccounts(current).find(entry=>!current.removedUsers?.[entry.id]&&!current.inactiveEmployees?.[entry.id]&&entry.username===login);
     const bootstrap=login==='owner'&&!storedAccount(current,'owner')&&!current.removedUsers?.owner&&validPassword(env.TAXI_OWNER_PASSWORD);
     const candidate=await passwordHash(password,account?.salt??'taximetr-invalid-login');
     const actor=account&&candidate===account.digest?account.id:bootstrap&&password===env.TAXI_OWNER_PASSWORD?'owner':null;
@@ -401,7 +401,7 @@ async function handleApi(request,env,path){
     const expires=Date.now()+sessionSeconds*1000;
     const {state,revision}=await updateState(env.DB,s=>{
       const latest=storedAccount(s,actor);
-      if(s.removedUsers?.[actor]||latest?.digest!==account?.digest||latest?.username!==account?.username) throw Error('Přihlašovací údaje se změnily. Přihlaste se znovu.');
+      if(s.inactiveEmployees?.[actor]||s.removedUsers?.[actor]||latest?.digest!==account?.digest||latest?.username!==account?.username) throw Error('Přihlašovací údaje se změnily. Přihlaste se znovu.');
       if(initial) (s.profiles??={}).owner={id:'owner',username:'owner',firstName:'',lastName:'',...initial};
       if(s.loginAttempts) delete s.loginAttempts[bucket];
       s.sessions=Object.fromEntries(Object.entries(s.sessions||{}).filter(([,entry])=>entry.expires>Date.now()));
@@ -412,10 +412,10 @@ async function handleApi(request,env,path){
   const current=token?await read(env.DB):null;
   const digest=token?await session(token):null;
   const active=current?.state.sessions?.[digest];
-  const actor=active?.expires>Date.now()&&!current.state.removedUsers?.[active.actor]&&storedAccount(current.state,active.actor)?active.actor:null;
+  const actor=active?.expires>Date.now()&&!current.state.inactiveEmployees?.[active.actor]&&!current.state.removedUsers?.[active.actor]&&storedAccount(current.state,active.actor)?active.actor:null;
   const checkSession=state=>{
     const entry=state.sessions?.[digest];
-    if(!state.removedUsers?.[actor]&&storedAccount(state,actor)&&entry?.actor===actor&&entry.expires>Date.now()) return;
+    if(!state.inactiveEmployees?.[actor]&&!state.removedUsers?.[actor]&&storedAccount(state,actor)&&entry?.actor===actor&&entry.expires>Date.now()) return;
     throw Error('Přihlaste se znovu.');
   };
   if(path==='logout'&&request.method==='POST'){
@@ -602,10 +602,55 @@ async function handleApi(request,env,path){
         return;
       }
       if(!Object.hasOwn(s.vehicles||{},input.vehicleId)) throw Error('Vozidlo nebylo nalezeno.');
+      if(typeof input.previousDriver==='string'){
+        const currentDriver=Object.keys(assignments).find(key=>assignments[key]===input.vehicleId)||'';
+        if(currentDriver!==input.previousDriver||(assignments[id]&&assignments[id]!==input.vehicleId)) throw Error('Přiřazení se změnilo. Vyberte řidiče znovu.');
+        if(currentDriver) delete assignments[currentDriver];
+      }
       if(Object.entries(assignments).some(([driverId,vehicleId])=>driverId!==id&&vehicleId===input.vehicleId)){
         throw Error('Vozidlo je už přiřazené jinému řidiči.');
       }
       assignments[id]=input.vehicleId;
+    });
+    return json(view(state,actor,revision,users));
+  }
+  if(['employee-profile','employee-status'].includes(path)&&request.method==='POST'){
+    if(!isOwner(actor)) return json({error:'Přístup zamítnut.'},403);
+    const input=await decode(request);
+    const {id,role}=input;
+    const credentials=path==='employee-profile'&&input.password?await newPassword(input.password):null;
+    const {state,revision}=await updateState(env.DB,s=>{
+      checkSession(s);
+      const employee=employeeDirectory(s,users).find(entry=>entry.id===id);
+      if(!employee) throw Error('Zaměstnanec nebyl nalezen.');
+      let revoke=false;
+      if(path==='employee-status'){
+        if(typeof input.inactive!=='boolean') throw Error('Neplatný stav účtu.');
+        if(input.inactive&&busy(s,id)) throw Error('Nejdříve dokončete aktivní jízdu.');
+        (s.inactiveEmployees??={})[id]=input.inactive;
+        revoke=input.inactive;
+      }else{
+        if(!['driver','dispatcher'].includes(role)) throw Error('Neplatná pracovní pozice.');
+        if(role!==employee.role&&busy(s,id)) throw Error('Nejdříve dokončete aktivní jízdu.');
+        const fields=profileInput(input);
+        checkUsername(s,users,fields.username,id);
+        const account=storedAccount(s,id);
+        if(!account&&!credentials) throw Error('Zadejte heslo pro aktivaci přihlášení.');
+        const permissions=validatePermissions(input.permissions,role);
+        const directory=s.employees?.[id]?s.employees:(s.profiles??={});
+        directory[id]={...account,id,...fields,...credentials,role};
+        (s.employeePermissions??={})[id]=permissions;
+        if(role!=='driver'&&s.vehicleAssignments) delete s.vehicleAssignments[id];
+        revoke=Boolean(credentials)||role!==employee.role;
+      }
+      if(revoke){
+        for(const [key,entry] of Object.entries(s.sessions||{})) if(entry.actor===id) delete s.sessions[key];
+      }
+      if(revoke||!permissionsFor(s,id).includes('gps')){
+        recordDriverActivity(s,id,s.positions[id],Date.now());
+        delete s.positions[id];
+      }
+      record(s,actor,path,employee.username);
     });
     return json(view(state,actor,revision,users));
   }

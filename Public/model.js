@@ -7,7 +7,7 @@ export const drivers = [
   {id:'06',name:'Ondřej Svoboda',lat:50.7789,lng:15.0249}
 ];
 export const isOwner = actor => actor === 'owner' || /^owner-[0-9a-f-]{36}$/.test(actor);
-export const employeeRole = (state,id) => state.employees?.[id]?.role ?? (id==='dispatch'?'dispatcher':'driver');
+export const employeeRole = (state,id) => state.employees?.[id]?.role ?? state.profiles?.[id]?.role ?? (id==='dispatch'?'dispatcher':'driver');
 export const permissionLabels = {
   dispatchJobs:'Zobrazit zakázky dispečinku',
   fleetMap:'Zobrazit mapu vozidel',
@@ -49,11 +49,11 @@ export const actionPermissions = Object.freeze({
   gps:'gps',availability:'availability',close:'closeShift',shiftEnd:'gps'
 });
 export const fleet = state => [
-  ...drivers.filter(driver=>!state.removedUsers?.[driver.id]).map(driver=>{
+  ...drivers.filter(driver=>!state.removedUsers?.[driver.id]&&!state.inactiveEmployees?.[driver.id]&&employeeRole(state,driver.id)==='driver').map(driver=>{
     const profile=state.profiles?.[driver.id]??state.userNames?.[driver.id];
     return profile?{...driver,name:profile.firstName+' '+profile.lastName,lastName:profile.lastName}:{...driver,lastName:driver.name.split(' ').at(-1)};
   }),
-  ...Object.values(state.employees||{}).filter(employee=>!state.removedUsers?.[employee.id]&&employeeRole(state,employee.id)==='driver').map(({id,firstName,lastName})=>({id,name:firstName+' '+lastName,lastName}))
+  ...[...Object.values(state.employees||{}),...Object.values(state.profiles||{}).filter(profile=>profile.role==='driver'&&!drivers.some(driver=>driver.id===profile.id))].filter(employee=>!state.removedUsers?.[employee.id]&&!state.inactiveEmployees?.[employee.id]&&employeeRole(state,employee.id)==='driver').map(({id,firstName,lastName})=>({id,name:firstName+' '+lastName,lastName}))
 ];
 const dayFormat = new Intl.DateTimeFormat('sv-SE',{timeZone:'Europe/Prague'});
 export const day = (t=Date.now()) => dayFormat.format(t);

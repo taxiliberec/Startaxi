@@ -74,20 +74,23 @@
       <p id="panel-message" role="status"></p>
       <section id="booking" hidden>
         <form id="ride">
-          <fieldset class="route-fields"><legend>Trasa jízdy</legend>
+          <fieldset data-step="0" class="route-fields"><legend>Vyzvednutí</legend>
           <label>Adresa vyzvednutí<input name="pickup" autocomplete="off" aria-controls="pickup-suggestions" required maxlength="200"></label>
           <div class="address-actions"><button type="button" id="use-location">Použít moji polohu</button><button type="button" data-pick-on-map="pickup">Vybrat na mapě</button></div>
           <div class="suggestions" aria-live="polite" id="pickup-suggestions"></div>
-          <label>Cílová adresa<input name="dropoff" autocomplete="off" aria-controls="dropoff-suggestions" required maxlength="200"></label>
+          <button type="button" data-next="0">Pokračovat k cíli</button></fieldset>
+          <fieldset data-step="1" hidden class="route-fields"><legend>Cíl jízdy</legend><label>Cílová adresa<input name="dropoff" autocomplete="off" aria-controls="dropoff-suggestions" required maxlength="200"></label>
           <div class="suggestions" aria-live="polite" id="dropoff-suggestions"></div>
           <div class="address-actions"><button type="button" data-pick-on-map="dropoff">Vybrat cíl na mapě</button></div>
-          </fieldset>
-          <label>Vyzvednutí<select name="timing"><option value="now">Co nejdřív</option><option value="later">Na určitý čas</option></select></label>
+          <button type="button" data-back="0">Zpět na vyzvednutí</button><button type="button" data-next="1">Zobrazit rekapitulaci</button></fieldset>
+          <div data-step="2" hidden><h3>Rekapitulace jízdy</h3><p id="route-summary"></p><button type="button" data-back="1">Upravit trasu</button>
+          <div id="stop-list"></div><button type="button" id="add-stop">Přidat mezizastávku</button>
+          <label>Vyzvednutí<select name="timing"><option value="now">Hned</option><option value="later">Na určitý čas</option></select></label>
           <label id="scheduled-label" hidden>Datum a čas (Česko)<input name="scheduled" type="datetime-local" disabled></label>
           <fieldset><legend>Platba po jízdě</legend><div class="payment"><label><input type="radio" name="payment" value="cash" checked> Hotově</label><label><input type="radio" name="payment" value="card"> Kartou u řidiče</label></div></fieldset>
           <label id="booking-reward" hidden>Věrnostní odměna<select name="rewardKey" disabled></select></label>
           <p id="fare-preview" role="status" hidden></p>
-          <button class="primary" type="submit">Odeslat objednávku</button>
+          <button class="primary" type="submit">Dokončit objednávku</button></div>
         </form>
       </section>
       <section id="history" hidden><div id="rides"></div></section>
