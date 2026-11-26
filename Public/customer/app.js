@@ -1,3 +1,5 @@
+import {localAddresses} from '/address-client.js';
+import {foldStreet} from '/address-search.js';
 const $=selector=>document.querySelector(selector);
 const panel=$('#panel');
 const menu=$('#menu');
@@ -42,19 +44,34 @@ function mapMessage(text){
 let bookingStep=0;
 const stopAddresses=()=>Array.from($('#stop-list').querySelectorAll('input'),input=>input.value.trim());
 function summarizeRoute(){
-  $('#route-summary').textContent=[rideForm.elements.pickup.value,...stopAddresses().filter(Boolean),rideForm.elements.dropoff.value].join(' → ');
+  const route=[rideForm.elements.pickup.value,...stopAddresses().filter(Boolean),rideForm.elements.dropoff.value];
+  $('#route-summary').replaceChildren(...route.map(address=>element('li',address)));
 }
 function showStep(step){
   bookingStep=step;
+  for(const [i,label] of Array.from(document.querySelectorAll('#booking-progress li')).entries()){
+    if(i===step) label.setAttribute('aria-current','step');
+    else label.removeAttribute('aria-current');
+    label.classList.toggle('complete',i<step);
+  }
   for(const section of rideForm.querySelectorAll('[data-step]')) section.hidden=Number(section.dataset.step)!==step;
   if(step<2) rideForm.elements[step===0?'pickup':'dropoff'].focus();
   else summarizeRoute();
   void refreshFare();
 }
-function advance(){
+async function advance(){
+  const step=bookingStep;
   const input=rideForm.elements[bookingStep===0?'pickup':'dropoff'];
   if(!input.value.trim()) input.value='';
-  if(input.reportValidity()) showStep(bookingStep+1);
+  if(!input.reportValidity()) return;
+  const address=input.value.trim();
+  if(!bookingPoints[input.name]){
+    const matches=await localAddresses(address).catch(()=>null);
+    if(bookingStep!==step||input.value.trim()!==address||!panel.open||page!=='booking') return;
+    const exact=matches?.find(match=>foldStreet(match.address.split(',')[0])===foldStreet(address.split(',')[0]));
+    if(exact) setPoint(input.name,exact.point,exact.address);
+  }
+  showStep(step+1);
 }
 rideForm.addEventListener('keydown',event=>{
   if(event.key==='Enter'&&bookingStep<2&&event.target.tagName==='INPUT'){
@@ -79,12 +96,14 @@ $('#add-stop').addEventListener('click',()=>{
   const input=document.createElement('input');
   input.required=true;
   input.maxLength=200;
-  input.addEventListener('input',stopsChanged);
+  const list=element('div','','suggestions');
+  list.setAttribute('aria-live','polite');
+  bindSuggestions(input,list,suggestion=>{input.value=suggestion.address;stopsChanged();},stopsChanged);
   label.append(input);
   const remove=element('button','Odebrat mezizastávku');
   remove.type='button';
   remove.addEventListener('click',()=>{row.remove();stopsChanged();});
-  row.append(label,remove);
+  row.append(label,list,remove);
   $('#stop-list').append(row);
   input.focus();
   stopsChanged();
@@ -388,6 +407,7 @@ function renderInfo(info,target){
 async function openPage(name){
   if(!account) return;
   page=name;
+  panel.classList.toggle('booking-panel',name==='booking');
   if(mapPicking) showMapPicker(null);
   menu.close();
   for(const id of Object.keys(titles)) $('#'+id).hidden=id!==name;
@@ -475,40 +495,46 @@ rideForm.elements.timing.addEventListener('change',()=>{
 });
 rideForm.elements.scheduled.addEventListener('change',()=>refreshFare());
 rideForm.elements.rewardKey.addEventListener('change',()=>refreshFare());
-for(const field of ['pickup','dropoff']){
-  const input=rideForm.elements[field];
-  const list=$('#'+field+'-suggestions');
-  let timer, fareTimer, controller;
+function bindSuggestions(input,list,onSelect,onEdit){
+  let controller,timer;
   input.addEventListener('input',()=>{
+    controller?.abort();
+    clearTimeout(timer);
+    list.replaceChildren();
+    onEdit();
+    const address=input.value.trim();
+    if(address.length<2) return;
+    const lookup=controller=new AbortController();
+    const current=()=>!lookup.signal.aborted&&input.isConnected&&input.value.trim()===address&&panel.open&&page==='booking'&&input.getClientRects().length;
+    const render=suggestions=>{
+      if(!current()) return;
+      for(const suggestion of suggestions){
+        const option=element('button',suggestion.address);
+        if(suggestion.street) option.append(element('small','Střed ulice'));
+        option.type='button';
+        option.addEventListener('click',()=>{onSelect(suggestion);list.replaceChildren();input.focus();});
+        list.append(option);
+      }
+      if(!suggestions.length) list.append(element('p','Bez shody. Ověřte adresu nebo vyberte bod na mapě.'));
+    };
+    void localAddresses(address).catch(()=>null).then(matches=>{
+      if(!current()) return;
+      if(matches!==null){render(matches);return;}
+      if(address.length<3) return;
+      timer=setTimeout(async()=>{
+        try{render((await api('geocode',{address},lookup.signal)).suggestions);}
+        catch(error){if(current()) list.append(element('p',error.message));}
+      },180);
+    });
+  });
+}
+for(const field of ['pickup','dropoff']){
+  bindSuggestions(rideForm.elements[field],$('#'+field+'-suggestions'),suggestion=>setPoint(field,suggestion.point,suggestion.address),()=>{
     delete bookingPoints[field];
+    clearPin(field);
     fareLookup?.abort();
     expectedCents=undefined;
     $('#fare-preview').hidden=true;
-    clearTimeout(fareTimer);
-    fareTimer=setTimeout(refreshFare,800);
-    list.replaceChildren();
-    clearPin(field);
-    clearTimeout(timer);
-    controller?.abort();
-    const address=input.value.trim();
-    if(address.length<3) return;
-    timer=setTimeout(async()=>{
-      const lookup=controller=new AbortController();
-      const isCurrent=()=>!lookup.signal.aborted&&input.value.trim()===address&&!bookingPoints[field]&&page==='booking'&&panel.open;
-      try{
-        const {suggestions}=await api('geocode',{address},lookup.signal);
-        if(!isCurrent()) return;
-        for(const suggestion of suggestions){
-          const option=element('button',(suggestion.approximate?'Podobná adresa · ':'')+suggestion.address);
-          option.type='button';
-          option.addEventListener('click',()=>{setPoint(field,suggestion.point,suggestion.address);input.focus();});
-          list.append(option);
-        }
-        if(!suggestions.length) list.append(element('p','Bez shody. Můžete doplnit číslo domu nebo obec.'));
-      }catch(error){
-        if(isCurrent()) list.append(element('p',error.message));
-      }
-    },150);
   });
 }
 for(const button of document.querySelectorAll('[data-pick-on-map]')){

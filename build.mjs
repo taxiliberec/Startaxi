@@ -1,6 +1,7 @@
 import {access,readFile,writeFile,mkdir,rm} from 'node:fs/promises';
 
 const files={
+  'address-search.js':'text/javascript','address-client.js':'text/javascript',
   'customer/index.html':'text/html','customer/style.css':'text/css','customer/app.js':'text/javascript',
   'customer/icon-192.png':'image/png','customer/icon-512.png':'image/png',
   'customer/manifest.webmanifest':'application/manifest+json','customer/sw.js':'text/javascript',
@@ -25,9 +26,21 @@ for(const [name,path,type] of [
   assets['/customer/'+name]=[type+'; charset=utf-8',await readFile('node_modules/'+path,'utf8'),false];
 }
 const addressRows=await readFile('data/liberec.json','utf8');
+const centres=JSON.parse(await readFile('data/street-centres.json','utf8'));
+const searchSource=assets['/address-search.js'][1];
+const {addressBucket}=await import('data:text/javascript;base64,'+Buffer.from(searchSource).toString('base64'));
+const buckets=new Map();
+function bucket(name){
+  const key=addressBucket(name);
+  if(!buckets.has(key)) buckets.set(key,{rows:[],centres:{}});
+  return buckets.get(key);
+}
+for(const row of JSON.parse(addressRows)) bucket(row[0]).rows.push(row);
+for(const [name,point] of Object.entries(centres)) bucket(name).centres[name]=point;
+for(const [key,data] of buckets) assets['/addresses/'+key+'.json']=['application/json',JSON.stringify(data),false];
 const model=assets['/model.js'][1].replace(/^export /gm,'');
 const customer=await readFile('customer-api.js','utf8');
 const worker=(await readFile('worker.js','utf8')).replace(/^import .*;\n/gm,'');
 await rm('dist/server',{recursive:true,force:true});
 await mkdir('dist/server',{recursive:true});
-await writeFile('dist/server/index.js','const addressRows = '+addressRows+';\nconst assets = '+JSON.stringify(assets)+';\n'+model+'\n'+customer+'\n'+worker);
+await writeFile('dist/server/index.js','const addressRows = '+addressRows+';\nconst streetCentres='+JSON.stringify(centres)+';\n'+searchSource.replace(/^export /gm,'')+'\nconst assets = '+JSON.stringify(assets)+';\n'+model+'\n'+customer+'\n'+worker);

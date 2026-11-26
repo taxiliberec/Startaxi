@@ -1,3 +1,4 @@
+import {localAddresses} from '/address-client.js';
 import {isOwner,allows,availablePermissions,defaultPermissions,permissionLabels,day,busy,meters,validPoint,assignmentTimeout} from './model.js';
 const $=sel=>document.querySelector(sel);
 const icons={
@@ -939,9 +940,13 @@ locationMap.addEventListener('keydown',event=>{
  const [dx,dy]=directions[event.key], step=event.shiftKey?64:16;
  moveLocationPin(dx*step,dy*step);
 });
+async function addressSuggestions(address){
+ const matches=await localAddresses(address).catch(()=>null);
+ return matches??(await api('geocode',{address})).suggestions;
+}
 function exactAddress(address,suggestions){
  const matches=suggestions.filter(result=>validPoint(result.point)&&
-   [result.address,result.address.replace(/, \d{3} ?\d{2} /,', ')].some(label=>label.localeCompare(address,'cs',{sensitivity:'base'})===0));
+   [result.address,result.address.split(',')[0],result.address.replace(/, \d{3} ?\d{2} /,', ')].some(label=>label.localeCompare(address,'cs',{sensitivity:'base'})===0));
  return matches.length===1?matches[0]:null;
 }
 const selectedAddresses=new WeakMap();
@@ -991,7 +996,7 @@ for(const form of [$('#booking'),$('#own-ride'),$('#job-edit-form')]){
      if(!match&&original?.[input.name]===typed&&validPoint(originalPoint)) match={address:typed,point:originalPoint};
      if(!match){
        refine.disabled=true;
-       try{match=exactAddress(typed,(await api('geocode',{address:typed})).suggestions);}
+       try{match=exactAddress(typed,await addressSuggestions(typed));}
        catch{}
        finally{refine.disabled=false;}
      }
@@ -1026,12 +1031,12 @@ for(const form of [$('#booking'),$('#own-ride'),$('#job-edit-form')]){
    input.addEventListener('input',()=>{
      resetLocation();
      const address=input.value.trim();
-     if(!live||address.length<3) return;
+     if(!live||address.length<2) return;
      const request=sequence, generation=sessionGeneration;
      timer=setTimeout(async()=>{
        showStatus('Hledám adresy…');
        try{
-         const {suggestions:results}=await api('geocode',{address});
+         const results=await addressSuggestions(address);
          const suggestions=results.filter(result=>validPoint(result.point));
          if(request!==sequence||generation!==sessionGeneration) return;
          showStatus(suggestions.length?'':'Žádná shoda. Zkuste upravit název ulice nebo doplnit obec.');
@@ -1058,7 +1063,7 @@ for(const form of [$('#booking'),$('#own-ride'),$('#job-edit-form')]){
            showStatus('Našeptávání je dočasně nedostupné. Zkuste hledání znovu.');
          }
        }
-     },150);
+     },35);
    });
    input.addEventListener('keydown',event=>{
      if(event.key==='Escape') clear();
@@ -1103,7 +1108,7 @@ for(const form of [$('#booking'),$('#own-ride'),$('#job-edit-form')]){
          if(original?.[input.name]===typed){
            return {address:typed,point:input.name==='pickup'?original.pickupPoint:original.target};
          }
-         const {suggestions}=await api('geocode',{address:typed});
+         const suggestions=await addressSuggestions(typed);
          return exactAddress(typed,suggestions);
        }));
        if(generation!==sessionGeneration||fields.some(input=>input.value!==f[input.name])||

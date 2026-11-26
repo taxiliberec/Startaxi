@@ -136,6 +136,9 @@ function customerRideInput(input){
 async function customerCityRoute(ride){
   // Resolve pricing addresses on the server so request coordinates cannot change the fare.
   const lookup=async (address,point)=>{
+    const street=foldStreet(address).split(',')[0];
+    const exact=(liberecAddresses(address)||[]).find(match=>foldStreet(match.address).split(',')[0]===street);
+    if(exact&&(!point||(point.lat===exact.point.lat&&point.lng===exact.point.lng))) return exact.point;
     if(point){
       const city=await ruianQuery(12,{
         where:'kod='+liberecCode,geometry:point.lng+','+point.lat,geometryType:'esriGeometryPoint',
@@ -143,10 +146,7 @@ async function customerCityRoute(ride){
       });
       return city.some(feature=>feature.attributes?.kod===liberecCode)?point:null;
     }
-    const matches=await liberecAddresses(address);
-    const street=foldStreet(address).split(',')[0];
-    const exact=matches.filter(match=>foldStreet(match.address).split(',')[0]===street);
-    return exact.length===1?exact[0].point:null;
+    return null;
   };
   try{
     const [pickup,target]=await Promise.all([lookup(ride.pickup,ride.pickupPoint),lookup(ride.dropoff,ride.target)]);
