@@ -95,6 +95,7 @@ legend { font-weight: 650; font-size: .875rem; }
 [data-ride-status="cancelled"], [data-ride-status="rejected"] { background: #ffe1df; color: #872e29; }
 
 #panel.booking-panel {
+  position: fixed; inset: 0; margin: auto; max-height: 90dvh; overflow-y: auto;
   --surface: #182833; --edge: #40515c; --text: #f5f5ef;
   width: min(calc(100% - 1.25rem), 32rem); padding: clamp(1.15rem,4vw,2rem);
   color: var(--text); background: linear-gradient(145deg,#1c303d,#101e29 55%);
