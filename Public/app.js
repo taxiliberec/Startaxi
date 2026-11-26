@@ -233,7 +233,7 @@ async function loadCustomerDirectory(){
  }
 }
 const statusText={waiting:'Čeká',assigned:'Čeká na přijetí',accepted:'K vyzvednutí',onboard:'Se zákazníkem',done:'Dokončeno'};
-let state=null, actor='dispatch', live=false, page='dispatch', queue='waiting', selected='', filter='', reportDate=day(), gps=null, gpsHeartbeat=null, gpsText='', lastGps=0, pending=false, incoming=null, noticeCount=0;
+let state=null, actor='dispatch', live=false, page='dispatch', queue='waiting', selected='', selectedJob=null, filter='', reportDate=day(), gps=null, gpsHeartbeat=null, gpsText='', lastGps=0, pending=false, incoming=null, noticeCount=0;
 function notify(msg){
  const t=$('#toast'); t.textContent=msg; t.className='visible';
  clearTimeout(notify.timer); notify.timer=setTimeout(()=>t.className='',4200);
@@ -325,7 +325,7 @@ function receive(data){
  role=data.role; permissions=data.permissions;
  if(!can('gps')&&(gpsRunning()||nativeStarting)) stopGps();
  if(permissionsChanged){
-   selected='';
+   selected=''; selectedJob=null;
    for(const id of ['location-editor','job-editor','shiftbox']) if($('#'+id).open) $('#'+id).close();
  }
  live=true; actor=data.actor; state=data.state;
@@ -345,7 +345,7 @@ function receive(data){
  if(!wasLive||actor!==previous||!canSeePage(page)){
    page=['activity','dispatch','driver','history','settings'].find(canSeePage);
    if(page==='settings') fillProfileForm();
-   selected=''; incoming=null;
+   selected=''; selectedJob=null; incoming=null;
  }
  if(state.shiftOpen&&can('gps')&&!gpsRunning()&&(!wasLive||shiftChanged)) startGps();
  const active=can('driverRide')?busy(state,actor):null;
@@ -382,6 +382,7 @@ function restoreDrafts(){
  for(const id of draftForms){
    const form=$('#'+id);
    const draft=readDraft(form);
+   if(id==='booking'&&draft?.fields?.stops&&!form.querySelector('[data-stop]')) for(const value of draft.fields.stops){$('#add-dispatch-stop').click();$('#dispatch-stops').lastElementChild.querySelector('input').value=value;}
    for(const [name,value] of Object.entries(draft?.fields??{})){
      if(form.elements[name]) form.elements[name].value=value;
    }
@@ -389,7 +390,12 @@ function restoreDrafts(){
 }
 for(const id of draftForms){
  const form=$('#'+id);
- form.addEventListener('input',()=>{if(live) storeDraft(form,{fields:Object.fromEntries(new FormData(form))});});
+ form.addEventListener('input',()=>{
+   if(!live) return;
+   const fields=Object.fromEntries(new FormData(form));
+   if(id==='booking') fields.stops=bookingInputs().slice(1,-1).map(input=>input.value);
+   storeDraft(form,{fields});
+ });
 }
 function lockApp(){
  sessionGeneration++; ridePushEnabled=false; revision=-1; drivers=[]; vehicles=[]; profile=null; state=null; live=false; stopGps();
@@ -460,6 +466,8 @@ function render(){
  if(page==='employees'&&isOwner(actor)){renderUserSettings();renderFleetSettings();}
  if(page==='customers'&&isOwner(actor)) renderCustomerSettings();
  document.querySelectorAll('[data-permission]').forEach(el=>el.hidden=!can(el.dataset.permission));
+ $('.intro').hidden=page==='dispatch';
+ $('.dispatch-center').hidden=!can('fleetMap')&&!can('create');
  $('#vehicle-status').hidden=page!=='dispatch'||!can('fleetMap');
  $('#driver-map-panel').hidden=!can('gps')&&!can('driverRide');
  $('#dispatch').setAttribute('data-panels',['create','fleetMap','dispatchJobs'].filter(can).length);
@@ -687,6 +695,12 @@ function renderQueue(){
        '</div>':'')+
    (j.status==='assigned'?'<div class="assignment-status"><span data-assignment-countdown="'+j.id+'"></span>'+
      (can('assign')?'<button type="button" data-requeue="'+j.id+'" hidden>Vrátit k přeřazení</button>':'')+'</div>':'')+'</div>').join('')||'<p class="empty">Žádné zakázky</p>';
+ if(!waiting.some(job=>job.id===selectedJob)) selectedJob=null;
+ const pair=$('#assign-pair');
+ pair.hidden=!can('assign')||(!selected&&!selectedJob);
+ pair.querySelector('span').textContent=(selectedJob?'#'+selectedJob:'Vyberte zakázku')+' → '+(selected?driverName(selected):'Vyberte řidiče');
+ pair.querySelector('button').disabled=!selectedJob||!selected;
+ for(const button of $('#queue').querySelectorAll('[data-job]')) button.setAttribute('aria-pressed',Number(button.dataset.job)===selectedJob);
  updateAssignmentTimers();
  $('#queue').querySelectorAll('.job-menu').forEach(menu=>{
    menu.hidden=!can('edit')&&!can('cancel');
@@ -902,7 +916,7 @@ function driverStatus(id, position, job){
  }
  return occupied(id)?{color:'red',label:'Obsazený'}:{color:'green',label:'Volný'};
 }
-let lastMarkerMarkup, lastStatusMarkup;
+let lastMarkerMarkup, lastStatusMarkup, lastRoster;
 function renderMap(){
  if(!live||page!=='dispatch'||!can('fleetMap')) return;
  const activeDrivers=drivers.filter(driver=>fresh(state.positions[driver.id])).map(driver=>{
@@ -915,9 +929,13 @@ function renderMap(){
      '<span class="driver-status-text">'+label+'</span></span>'
  ).join('');
  if(lastStatusMarkup!==statusMarkup){$('#vehicle-status').innerHTML=statusMarkup;lastStatusMarkup=statusMarkup;}
+ const roster=activeDrivers.map(({driver,color,label})=>'<button type="button" data-car="'+esc(driver.id)+'" aria-pressed="'+(selected===driver.id)+'" '+(color==='green'&&can('assign')?'':'disabled')+'><b>'+esc(driver.name)+'</b><small class="roster-'+color+'">'+esc(label)+'</small></button>').join('')||'<p class="empty">Žádní aktivní řidiči</p>';
+ const list=$('#dispatch-driver-list');
+ if(roster!==lastRoster){list.innerHTML=roster;lastRoster=roster;}
  const map=$('#map'), w=map.clientWidth,h=map.clientHeight;
  if(!w||!h) return;
  const c=project(center), x=c.x-w/2-offset.x,y=c.y-h/2-offset.y;
+ $('#route-layer polyline').setAttribute('points',draftRoute.map(p=>{const q=project(p);return [q.x-x,q.y-y].join(',');}).join(' '));
  renderTiles($('#tiles'),'fleet',zoom,x,y,w,h);
  const markers=activeDrivers.map(({driver:d,position:p,job:j,color,label:status})=>{
    const point=project(p);
@@ -1066,12 +1084,46 @@ function exactAddress(address,suggestions){
  return matches.length===1?matches[0]:null;
 }
 const selectedAddresses=new WeakMap();
+let draftRoute=[], routeRequest;
+function bookingInputs(){
+ const form=$('#booking');
+ return [form.elements.pickup,...form.querySelectorAll('[data-stop]'),form.elements.dropoff];
+}
+async function previewRoute(){
+ routeRequest?.abort();
+ const request=routeRequest=new AbortController();
+ const points=bookingInputs().map(input=>selectedAddresses.get(input)?.point);
+ const info=$('#route-info');
+ draftRoute=[];renderMap();
+ info.hidden=true;
+ if(points.some(point=>!validPoint(point))||!can('fleetMap')) return;
+ info.hidden=false;info.textContent='Hledám trasu…';
+ try{
+   const coords=points.map(point=>point.lng+','+point.lat).join(';');
+   const response=await fetch('https://routing.openstreetmap.de/routed-car/route/v1/driving/'+coords+'?overview=full&geometries=geojson',{signal:request.signal});
+   if(!response.ok) throw Error();
+   const route=(await response.json()).routes?.[0];
+   if(!route||request.signal.aborted) throw Error();
+   draftRoute=route.geometry.coordinates.map(([lng,lat])=>({lng,lat}));
+   info.textContent='Náhled trasy · '+(route.distance/1000).toLocaleString('cs-CZ',{maximumFractionDigits:1})+' km';
+   const map=$('#map');
+   for(zoom=17;zoom>11;zoom--){
+     const projected=points.map(p=>project(p));
+     if(Math.max(...projected.map(p=>p.x))-Math.min(...projected.map(p=>p.x))<map.clientWidth-60&&Math.max(...projected.map(p=>p.y))-Math.min(...projected.map(p=>p.y))<map.clientHeight-60) break;
+   }
+   const xs=points.map(p=>project(p).x),ys=points.map(p=>project(p).y),origin=project(center);
+   offset={x:origin.x-(Math.min(...xs)+Math.max(...xs))/2,y:origin.y-(Math.min(...ys)+Math.max(...ys))/2};
+   renderMap();
+ }catch{if(!request.signal.aborted) info.textContent='Silniční trasu se nepodařilo načíst.';}
+}
+
 locationEditor.querySelector('form').addEventListener('submit',event=>{
  if(event.submitter!==locationConfirm) return;
  const {input,typed,address,point,placed}=locationDraft;
  if(!placed||locationDraft.lookingUp||input.value.trim()!==typed){event.preventDefault();return;}
  input.value=address;
  selectedAddresses.set(input,{address,point});
+ if(input.form?.id==='booking') void previewRoute();
  locationDraft.button.textContent='Poloha upřesněna na mapě';
 });
 locationEditor.addEventListener('close',()=>{
@@ -1083,7 +1135,7 @@ locationEditor.addEventListener('close',()=>{
 });
 for(const form of [$('#booking'),$('#own-ride'),$('#job-edit-form')]){
  const fields=['pickup','dropoff'].map(name=>form.elements[name]);
- for(const input of fields){
+ function bindAddress(input){
    const list=document.createElement('div');
    list.className='address-suggestions';
    list.hidden=true;
@@ -1143,9 +1195,10 @@ for(const form of [$('#booking'),$('#own-ride'),$('#job-edit-form')]){
      selectedAddresses.delete(input);
      refine.textContent=refineLabel;
    };
-   form.addEventListener('reset',resetLocation);
+   if(!input.hasAttribute('data-stop')) form.addEventListener('reset',resetLocation);
    input.addEventListener('input',()=>{
      resetLocation();
+     if(form.id==='booking') void previewRoute();
      const address=input.value.trim();
      if(!live||address.length<2) return;
      const request=sequence, generation=sessionGeneration;
@@ -1167,6 +1220,7 @@ for(const form of [$('#booking'),$('#own-ride'),$('#job-edit-form')]){
            choice.addEventListener('click',()=>{
              input.value=result.address;
              selectedAddresses.set(input,result);
+             if(form.id==='booking') void previewRoute();
              refine.textContent=refineLabel;
              clear();
              input.focus();
@@ -1191,13 +1245,29 @@ for(const form of [$('#booking'),$('#own-ride'),$('#job-edit-form')]){
    list.addEventListener('keydown',event=>{
      if(event.key==='Escape'){clear();input.focus();}
    });
-   form.addEventListener('focusout',event=>{
+   (input.hasAttribute('data-stop')?input.closest('label').parentElement:form).addEventListener('focusout',event=>{
      if((event.target===input||list.contains(event.target))&&event.relatedTarget!==input&&!list.contains(event.relatedTarget)) clear();
+   });
+ }
+ function addDispatchStop(value=''){
+   const row=document.createElement('div'),label=document.createElement('label'),input=document.createElement('input');
+   input.required=true;input.maxLength=200;input.dataset.stop='';input.value=value;
+   label.textContent='Mezizastávka';label.append(input);row.append(label);
+   $('#dispatch-stops').append(row);bindAddress(input);
+   const remove=document.createElement('button');remove.type='button';remove.textContent='Odebrat mezizastávku';
+   remove.onclick=()=>{row.remove();form.dispatchEvent(new Event('input'));void previewRoute();};row.append(remove);input.focus();
+ }
+ fields.forEach(bindAddress);
+ if(form.id==='booking'){
+   $('#add-dispatch-stop').onclick=()=>addDispatchStop();
+   form.addEventListener('reset',()=>{
+     $('#dispatch-stops').replaceChildren();routeRequest?.abort();draftRoute=[];$('#route-info').hidden=true;renderMap();
    });
  }
  form.addEventListener('submit',async event=>{
    event.preventDefault();
    const f=Object.fromEntries(new FormData(form));
+   if(form.id==='booking') f.stops=bookingInputs().slice(1,-1).map(input=>input.value.trim());
    const generation=sessionGeneration;
    const submit=form.querySelector('[type=submit]');
    const ownRide=form.id==='own-ride';
@@ -1366,7 +1436,7 @@ document.addEventListener('click',async e=>{
    if(occupied(d.car)){notify('Toto vozidlo je obsazené.');return;}
    if(live&&!fresh(state.positions[d.car])){notify('Řidič nesdílí aktuální polohu.');return;}
    selected=selected===d.car?'':d.car;queue='waiting';render();
-   if(selected) notify(driverName(selected)+' · vyberte zakázku');
+   if(selected&&!selectedJob) notify(driverName(selected)+' · vyberte zakázku');
    return;
  }
  if(d.jobEdit&&can(d.jobEdit==='cancelJob'?'cancel':'edit')){
@@ -1397,9 +1467,15 @@ document.addEventListener('click',async e=>{
    return;
  }
  if(d.job&&can('assign')){
-   if(!selected){notify('Nejdříve vyberte volné vozidlo na mapě.');return;}
+   selectedJob=selectedJob===Number(d.job)?null:Number(d.job);
+   renderQueue();
+   return;
+ }
+ if(d.confirmPair!==undefined&&can('assign')&&selectedJob&&selected){
    const name=driverName(selected);
-   if(await perform({type:'assign',id:Number(d.job),driver:selected})) notify('Zakázka přiřazena · '+name);
+   if(await perform({type:'assign',id:selectedJob,driver:selected})){
+     selectedJob=null;selected='';render();notify('Zakázka přiřazena · '+name);
+   }
    return;
  }
  if(d.ridePush!==undefined&&can('driverRide')){

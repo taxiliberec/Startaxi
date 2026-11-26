@@ -106,7 +106,10 @@ export function change(s,actor,a,now=Date.now()){
       for(const [v,max] of [[name,121],[pickup,200],[dropoff,200]]) requireThat(typeof v==='string'&&v.trim()&&v.length<=max,'Vyplňte povinné údaje.');
       requireThat(typeof note==='string'&&note.length<=1000&&typeof scheduled==='string'&&(!scheduled||/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(scheduled))&&Number.isInteger(cents)&&cents>=0&&cents<=10000000,'Zkontrolujte čas, poznámku a cenu.');
       requireThat(validPoint(pickupPoint)&&validPoint(target),'Vyberte adresu vyzvednutí i doručení se souřadnicemi.');
-      s.jobs.unshift({id:++s.seq,...(a.requestId?{requestId:a.requestId,createdBy:actor}:{}),name:name.trim(),pickup:pickup.trim(),dropoff:dropoff.trim(),note,scheduled,cents,target,pickupPoint,created:now,...(ownRide?{driver:actor,status:'accepted',ownRide:true}:{status:'waiting'})});
+      const stops=a.stops??[];
+      requireThat(Array.isArray(stops)&&stops.every(v=>typeof v==='string'&&v.trim()&&v.length<=200),'Neplatná mezizastávka.');
+      requireThat(a.phone==null||(typeof a.phone==='string'&&a.phone.length<=32),'Neplatné telefonní číslo.');
+      s.jobs.unshift({id:++s.seq,...(a.phone?{phone:a.phone.trim()}:{}),...(stops.length?{stops:stops.map(v=>v.trim())}:{}),...(a.requestId?{requestId:a.requestId,createdBy:actor}:{}),name:name.trim(),pickup:pickup.trim(),dropoff:dropoff.trim(),note,scheduled,cents,target,pickupPoint,created:now,...(ownRide?{driver:actor,status:'accepted',ownRide:true}:{status:'waiting'})});
       break;
     }
     case 'cancelJob':
