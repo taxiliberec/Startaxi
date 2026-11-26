@@ -129,7 +129,9 @@ function customerRideInput(input){
   if(!['cash','card'].includes(payment)||typeof requestId!=='string'||!/^[a-f0-9-]{36}$/.test(requestId)) throw Error('Zkontrolujte způsob platby.');
   if([pickupPoint,target].some(point=>point!=null&&!validPoint(point))) throw Error('Neplatná poloha na mapě.');
   const point=value=>value==null?undefined:{lat:value.lat,lng:value.lng};
-  return {pickup,dropoff,scheduled,payment,requestId,pickupPoint:point(pickupPoint),target:point(target)};
+  if(input.stops!==undefined&&!Array.isArray(input.stops)) throw Error('Neplatné mezizastávky.');
+  const stops=(input.stops??[]).map(address=>customerText(address,200,true));
+  return {pickup,dropoff,stops,scheduled,payment,requestId,pickupPoint:point(pickupPoint),target:point(target)};
 }
 async function customerCityRoute(ride){
   // Resolve pricing addresses on the server so request coordinates cannot change the fare.
@@ -148,7 +150,9 @@ async function customerCityRoute(ride){
   };
   try{
     const [pickup,target]=await Promise.all([lookup(ride.pickup,ride.pickupPoint),lookup(ride.dropoff,ride.target)]);
-    if(pickup&&target) return {pickup,target};
+    if(!pickup||!target) return null;
+    const stops=await Promise.all(ride.stops.map(address=>lookup(address)));
+    if(stops.every(Boolean)) return {pickup,target,stops};
   }catch{/* When an address cannot be verified, the dispatcher sets the fare. */}
   return null;
 }
@@ -160,7 +164,8 @@ function customerFare(state,ride,route,now=Date.now()){
   if(mode==='fixed'&&Number.isInteger(fixedFare)) return fixedFare*100;
   if(mode!=='automatic') return null;
 
-  const distance=meters(route.pickup,route.target);
+  const points=[route.pickup,...(route.stops||[]),route.target];
+  const distance=points.slice(1).reduce((total,point,index)=>total+meters(points[index],point),0);
   const base=distance<=2000?90:distance<=5000?120:150;
   if(ride.scheduled) return base*100;
 
@@ -171,8 +176,8 @@ function customerFare(state,ride,route,now=Date.now()){
   const adjustment=waiting===0&&available>0?-30:Math.min(150,Math.max(0,waiting-available)*30);
   return (base+adjustment)*100;
 }
-const customerRide=({id,pickup,dropoff,scheduled,payment,created,done,status,confirmedAt,rejectedAt,cents,priceSet,rewardDiscountCents,rewardName})=>({
-  id,pickup,dropoff,scheduled,payment,created,done,
+const customerRide=({id,pickup,dropoff,stops=[],scheduled,payment,created,done,status,confirmedAt,rejectedAt,cents,priceSet,rewardDiscountCents,rewardName})=>({
+  id,pickup,dropoff,stops,scheduled,payment,created,done,
   status:rejectedAt?'rejected':status==='waiting'&&confirmedAt?'confirmed':status,cents:status==='done'||priceSet?cents:null,
   ...(rewardDiscountCents?{rewardDiscountCents,rewardName}:{})
 });

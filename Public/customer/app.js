@@ -39,7 +39,59 @@ function mapMessage(text){
   $('#map-message').hidden=!text;
   $('#map-message').textContent=text;
 }
+let bookingStep=0;
+const stopAddresses=()=>Array.from($('#stop-list').querySelectorAll('input'),input=>input.value.trim());
+function summarizeRoute(){
+  $('#route-summary').textContent=[rideForm.elements.pickup.value,...stopAddresses().filter(Boolean),rideForm.elements.dropoff.value].join(' → ');
+}
+function showStep(step){
+  bookingStep=step;
+  for(const section of rideForm.querySelectorAll('[data-step]')) section.hidden=Number(section.dataset.step)!==step;
+  if(step<2) rideForm.elements[step===0?'pickup':'dropoff'].focus();
+  else summarizeRoute();
+  void refreshFare();
+}
+function advance(){
+  const input=rideForm.elements[bookingStep===0?'pickup':'dropoff'];
+  if(!input.value.trim()) input.value='';
+  if(input.reportValidity()) showStep(bookingStep+1);
+}
+rideForm.addEventListener('keydown',event=>{
+  if(event.key==='Enter'&&bookingStep<2&&event.target.tagName==='INPUT'){
+    event.preventDefault();
+    advance();
+  }
+});
+for(const button of rideForm.querySelectorAll('[data-next]')) button.addEventListener('click',advance);
+for(const button of rideForm.querySelectorAll('[data-back]')) button.addEventListener('click',()=>showStep(Number(button.dataset.back)));
+let stopTimer;
+function stopsChanged(){
+  summarizeRoute();
+  expectedCents=undefined;
+  fareLookup?.abort();
+  $('#fare-preview').hidden=true;
+  clearTimeout(stopTimer);
+  stopTimer=setTimeout(refreshFare,350);
+}
+$('#add-stop').addEventListener('click',()=>{
+  const row=document.createElement('div');
+  const label=element('label','Adresa mezizastávky');
+  const input=document.createElement('input');
+  input.required=true;
+  input.maxLength=200;
+  input.addEventListener('input',stopsChanged);
+  label.append(input);
+  const remove=element('button','Odebrat mezizastávku');
+  remove.type='button';
+  remove.addEventListener('click',()=>{row.remove();stopsChanged();});
+  row.append(label,remove);
+  $('#stop-list').append(row);
+  input.focus();
+  stopsChanged();
+});
 function resetRide(){
+  $('#stop-list').replaceChildren();
+  showStep(0);
   rideForm.reset();
   rideForm.elements.rewardKey.value='';
   rideForm.elements.timing.dispatchEvent(new Event('change'));
@@ -236,7 +288,7 @@ async function refreshFare(){
   const selected=selector.value;
   output.hidden=true;
   expectedCents=undefined;
-  if(!account||!panel.open||page!=='booking'||!rideForm.checkValidity()){
+  if(bookingStep!==2||!account||!panel.open||page!=='booking'||!rideForm.checkValidity()){
     selector.replaceChildren();
     selector.disabled=true;
     $('#booking-reward').hidden=true;
@@ -247,7 +299,7 @@ async function refreshFare(){
   output.hidden=false;
   requestId??=crypto.randomUUID();
   try{
-    const payload={...Object.fromEntries(new FormData(rideForm)),requestId,pickupPoint:bookingPoints.pickup,target:bookingPoints.dropoff};
+    const payload={...Object.fromEntries(new FormData(rideForm)),requestId,stops:stopAddresses(),pickupPoint:bookingPoints.pickup,target:bookingPoints.dropoff};
     const {cents,rewards=[],discountCents=0}=await api('fare',payload,lookup.signal);
     if(lookup.signal.aborted||!panel.open||page!=='booking') return;
     selector.replaceChildren(new Option('Bez odměny',''));
@@ -271,7 +323,7 @@ function renderRides(rides){
     const time=element('time',dateTime.format(ride.done??ride.created));
     time.dateTime=new Date(ride.done??ride.created).toISOString();
     const reservation=ride.scheduled?element('p','Vyzvednutí '+ride.scheduled.slice(0,10).split('-').reverse().join('.')+' v '+ride.scheduled.slice(11),'details'):null;
-    card.append(time,element('p',ride.pickup+' → '+ride.dropoff,'ride-route'));
+    card.append(time,element('p',[ride.pickup,...(ride.stops||[]),ride.dropoff].join(' → '),'ride-route'));
     if(reservation) card.append(reservation);
     const badge=element('strong',statuses[ride.status]||ride.status);
     badge.dataset.rideStatus=ride.status;
@@ -484,13 +536,14 @@ $('#confirm-map-point').addEventListener('click',async()=>{
   if(account===current) void addressForPoint(field,{lat,lng},field==='pickup'?'Vyzvednutí na mapě':'Cíl na mapě');
 });
 bindForm(rideForm,async data=>{
+  if(bookingStep<2){advance();return;}
   requestId??=crypto.randomUUID();
   if(expectedCents===undefined){
     await refreshFare();
     throw Error('Před odesláním zkontrolujte cenu.');
   }
   try{
-    await api('rides',{...data,requestId,expectedCents,pickupPoint:bookingPoints.pickup,target:bookingPoints.dropoff});
+    await api('rides',{...data,requestId,expectedCents,stops:stopAddresses(),pickupPoint:bookingPoints.pickup,target:bookingPoints.dropoff});
   }catch(error){
     if(error.code==='fare_changed') await refreshFare();
     throw error;

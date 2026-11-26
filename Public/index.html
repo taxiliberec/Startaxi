@@ -1,8 +1,8 @@
 <!doctype html>
-<html lang="cs"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#101827"><link rel="manifest" href="/manifest.webmanifest"><link rel="icon" href="/taximetr.svg" type="image/svg+xml"><link rel="apple-touch-icon" href="/taximetr-192.png"><title>taximetr · Dispečink</title><link rel="stylesheet" href="/style.css"><script type="module" src="/app.js?customer-pricing=3"></script></head>
-<body><header class="top" hidden><div class="brand"><img class="brand-logo" src="/taximetr-192.png" alt="taximetr"><div><b>taximetr</b><small>DISPEČERSKÝ SYSTÉM</small></div></div><nav><button data-page="dispatch"><i data-icon="grid"></i>Dispečink</button><button data-page="driver" hidden><i data-icon="taxi"></i>Moje vozidlo</button><button data-page="history"><i data-icon="chart"></i>Denní přehled</button><button data-page="activity" hidden><i data-icon="list"></i>Majitel</button><button data-page="settings">Nastavení</button></nav><div class="account"><span id="sync-status" role="status"></span><span id="connection">Ukázková data</span><button id="login" aria-label="Přihlášení">Přihlásit se</button></div></header>
+<html lang="cs"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#101827"><link rel="manifest" href="/manifest.webmanifest"><link rel="icon" href="/taximetr.svg" type="image/svg+xml"><link rel="apple-touch-icon" href="/taximetr-192.png"><title>taximetr · Dispečink</title><link rel="stylesheet" href="/style.css?customer-workspace=1"><script type="module" src="/app.js?customer-workspace=1"></script></head>
+<body><header class="top" hidden><div class="brand"><img class="brand-logo" src="/taximetr-192.png" alt="taximetr"><div><b>taximetr</b><small>DISPEČERSKÝ SYSTÉM</small></div></div><nav aria-label="Hlavní navigace"><button data-page="dispatch"><i data-icon="grid"></i>Dispečink</button><button data-page="history"><i data-icon="chart"></i>Denní přehledy</button><button data-page="employees" hidden><i data-icon="person"></i>Zaměstnanci</button><button data-page="customers" hidden><i data-icon="taxi"></i>Zákaznická appka</button><button data-page="activity" hidden><i data-icon="list"></i>Majitel</button><button data-page="settings"><i data-icon="settings"></i>Nastavení</button><button data-page="driver" hidden><i data-icon="taxi"></i>Moje vozidlo</button></nav><div class="account"><span id="sync-status" role="status"></span><span id="connection">Ukázková data</span><button id="login" aria-label="Přihlášení">Přihlásit se</button></div></header>
 <main id="app" hidden><div class="intro"><div><p class="eyebrow"><span></span> PROVOZ TAXI LIBEREC</p><h1 id="title">Dispečink</h1><p id="subtitle">Spravujte zakázky a sledujte polohu vozidel v Liberci.</p></div><div id="vehicle-status" class="vehicle-status" role="group" aria-label="Aktivní řidiči" hidden></div><div class="today"><i data-icon="calendar"></i><span id="today"></span></div></div><div id="stats" class="stats"></div>
-<div id="dispatch" class="workspace"><section class="panel formpanel" data-permission="create"><div class="panelhead"><span class="headicon" data-icon="plus"></span><div><h2>Nová zakázka</h2><p>Údaje z telefonické objednávky</p></div></div><form id="booking"><label>Jméno a příjmení<input name="name" required maxlength="120" placeholder="Např. Jan Novák"></label><label>Místo vyzvednutí<div class="field"><i data-icon="pin"></i><input name="pickup" required maxlength="200" placeholder="Ulice a číslo, Liberec"></div></label><label>Místo doručení<div class="field"><i data-icon="flag"></i><input name="dropoff" required maxlength="200" placeholder="Cílová adresa"></div></label><label>Pozdější čas vyzvednutí <small>Volitelné</small><input type="datetime-local" name="scheduled"></label><label>Poznámka <small>Volitelné</small><textarea name="note" maxlength="1000" placeholder="Např. vyzvednout u hlavního vchodu" rows="2"></textarea></label><label>Cena cesty<div class="field suffix"><input name="price" type="number" min="0" max="100000" step=".01" required placeholder="0"><span>Kč</span></div></label><button class="primary" type="submit"><i data-icon="plus"></i> Vytvořit zakázku</button></form></section>
+<div id="dispatch" class="workspace"><section class="panel formpanel" data-permission="create"><div class="panelhead"><span class="headicon" data-icon="plus"></span><div><h2>Nová zakázka</h2><p>Údaje z telefonické objednávky</p></div></div><form id="booking"><label>Jméno a příjmení<input name="name" required maxlength="121" placeholder="Např. Jan Novák"></label><label>Místo vyzvednutí<div class="field"><i data-icon="pin"></i><input name="pickup" required maxlength="200" placeholder="Ulice a číslo, Liberec"></div></label><label>Místo doručení<div class="field"><i data-icon="flag"></i><input name="dropoff" required maxlength="200" placeholder="Cílová adresa"></div></label><label>Pozdější čas vyzvednutí <small>Volitelné</small><input type="datetime-local" name="scheduled"></label><label>Poznámka <small>Volitelné</small><textarea name="note" maxlength="1000" placeholder="Např. vyzvednout u hlavního vchodu" rows="2"></textarea></label><label>Cena cesty<div class="field suffix"><input name="price" type="number" min="0" max="100000" step=".01" required placeholder="0"><span>Kč</span></div></label><button class="primary" type="submit"><i data-icon="plus"></i> Vytvořit zakázku</button></form></section>
 <section class="panel mappanel" data-permission="fleetMap"><div class="panelhead"><span class="headicon" data-icon="map"></span><div><h2>Mapa vozidel</h2><p>Liberec a okolí</p></div><label class="map-style">Podklad<select id="fleet-map-style"></select></label></div><div id="map" aria-label="Mapa Liberce"><div id="tiles"></div><div id="markers"></div><div class="maptools"><button data-zoom="1" aria-label="Přiblížit">+</button><button data-zoom="-1" aria-label="Oddálit">−</button><button data-zoom="0" aria-label="Vycentrovat">◎</button></div><div class="mapcredit">© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a></div></div><div class="legend"><span><em class="green"></em> Volný</span><span><em class="red"></em> Obsazený</span><span><em class="orange"></em> Blízko cíle</span><span><em class="pickup-marker"></em> Vyzvednutí</span><span><em class="destination-marker"></em> Doručení</span><span class="maphint" id="maphint">Vyberte volné vozidlo</span></div></section>
 <section class="panel queuepanel" data-permission="dispatchJobs"><div class="panelhead"><span class="headicon" data-icon="list"></span><div><h2>Zakázky</h2><p>Přiřazení řidičům</p></div><span class="count" id="queuecount"></span></div><div class="tabs"><button data-queue="waiting" class="active">Čekající</button><button data-queue="active">Probíhající</button></div><div id="queue"></div></section></div>
 <section id="history" hidden></section><section id="driver" hidden>
@@ -30,10 +30,30 @@
   </section>
 </section>
 <section id="activity" hidden></section>
-<section id="settings" class="drivergrid" hidden>
-  <section id="customer-settings" class="panel detail" hidden>
-    <h2>Zákaznická aplikace</h2>
-    <p><a href="/customer/" target="_blank" rel="noopener">Otevřít objednávky pro zákazníky</a></p>
+<section id="employees" class="employee-panels" hidden>
+<section class="panel detail"><h2>Vytvořit zaměstnance</h2><form id="employee-form">
+<label>Jméno<input name="firstName" required maxlength="80" autocomplete="off"></label>
+<label>Příjmení<input name="lastName" required maxlength="80" autocomplete="off"></label>
+<label>Přihlašovací jméno<input name="username" required pattern="[a-zA-Z0-9._\-]{3,40}" autocomplete="off" autocapitalize="none"><small>3 až 40 znaků. Použijte písmena bez diakritiky, číslice, pomlčku, podtržítko nebo tečku.</small></label>
+<label>Heslo<input name="password" type="password" required minlength="12" maxlength="128" autocomplete="new-password"><small>Alespoň 12 znaků.</small></label>
+<label>Pracovní pozice<select name="role"><option value="driver">Řidič</option><option value="dispatcher">Dispečer</option></select></label>
+<fieldset><legend>Oprávnění nového účtu</legend><div id="new-permissions" class="permission-list"></div></fieldset><button class="primary">Vytvořit účet</button>
+</form></section>
+<section class="panel detail"><h2>Seznam zaměstnanců</h2><div id="employee-list"></div></section>
+  <section id="fleet-settings" class="panel detail" hidden>
+    <h2>Vozový park</h2>
+    <div id="fleet-list"></div>
+    <button type="button" class="primary" id="add-vehicle">Přidat vozidlo</button>
+  </section>
+</section>
+<section id="customers" class="panel" hidden>
+  <nav class="tabs customer-tabs" aria-label="Správa zákaznické aplikace">
+    <button type="button" data-customer-tab="configuration" class="active" aria-pressed="true">Nastavení aplikace</button>
+    <button type="button" data-customer-tab="loyalty" aria-pressed="false">Věrnostní program</button>
+    <button type="button" data-customer-tab="directory" aria-pressed="false">Seznam zákazníků</button>
+  </nav>
+  <section class="detail" data-customer-pane="configuration">
+    <p class="actions"><a href="https://startaxi-1.onrender.com/" target="_blank" rel="noopener">Otevřít zákaznickou aplikaci</a></p>
     <form id="customer-settings-form">
       <label>Telefon na dispečink<input name="phone" type="tel" maxlength="32"></label>
       <label>Kontaktní e-mail<input name="email" type="email" maxlength="254"></label>
@@ -46,16 +66,27 @@
       </select></label>
       <label id="customer-fixed-fare" hidden>Pevná cena (Kč)<input name="fixedFare" type="number" min="1" max="10000" step="1" disabled></label>
       <p id="customer-auto-fare" hidden>Základ 90 Kč do 2 km, 120 Kč do 5 km a 150 Kč nad 5 km vzdušnou čarou. Vytížení upraví cenu o −30 až +150 Kč.</p>
-      <fieldset>
-        <legend>Věrnostní program</legend>
+      <button class="primary" type="submit">Uložit nastavení aplikace</button>
+    </form>
+  </section>
+  <section class="detail" data-customer-pane="loyalty" hidden>
+    <form id="customer-loyalty-form">
         <label><input name="loyaltyEnabled" type="checkbox"> Zapnout věrnostní program</label>
         <label>Body za dokončenou jízdu<input name="pointsPerRide" type="number" min="1" max="1000" step="1" value="1" required></label>
         <div id="loyalty-rewards"></div>
         <button id="add-loyalty-reward" type="button">Přidat úroveň odměny</button>
-      </fieldset>
-      <button class="primary" type="submit">Uložit nastavení pro zákazníky</button>
+      <button class="primary" type="submit">Uložit věrnostní program</button>
     </form>
   </section>
+  <section class="detail" data-customer-pane="directory" hidden>
+    <p id="customer-directory-status" role="status"></p>
+    <div class="scroll"><table id="customer-directory" aria-label="Registrovaní zákazníci" hidden>
+      <thead><tr><th scope="col">Příjmení</th><th scope="col">Jméno</th></tr></thead>
+      <tbody></tbody>
+    </table></div>
+  </section>
+</section>
+<section id="settings" class="drivergrid" hidden>
   <section class="panel detail">
     <h2>Můj profil</h2><p id="profile-vehicle" hidden></p>
     <form id="profile-form">
@@ -69,20 +100,6 @@
       <button class="primary" type="submit">Uložit profil</button>
     </form>
   </section>
-  <section id="fleet-settings" class="panel detail" hidden>
-    <h2>Vozový park</h2>
-    <div id="fleet-list"></div>
-    <button type="button" class="primary" id="add-vehicle">Přidat vozidlo</button>
-  </section>
-<section id="user-settings" class="panel detail" hidden>
-<h2>Správa uživatelů</h2><div id="employee-list"></div><h3>Přidat zaměstnance</h3><form id="employee-form">
-<label>Jméno<input name="firstName" required maxlength="80" autocomplete="off"></label>
-<label>Příjmení<input name="lastName" required maxlength="80" autocomplete="off"></label>
-<label>Přihlašovací jméno<input name="username" required pattern="[a-zA-Z0-9._\-]{3,40}" autocomplete="off" autocapitalize="none"><small>3 až 40 znaků. Použijte písmena bez diakritiky, číslice, pomlčku, podtržítko nebo tečku.</small></label>
-<label>Pracovní pozice<select name="role"><option value="driver">Řidič</option><option value="dispatcher">Dispečer</option></select></label>
-<label>Heslo<input name="password" type="password" required minlength="12" maxlength="128" autocomplete="new-password"><small>Alespoň 12 znaků.</small></label>
-<fieldset><legend>Oprávnění nového účtu</legend><div id="new-permissions" class="permission-list"></div></fieldset><button class="primary">Vytvořit účet</button>
-</form></section>
   <section id="owner-settings" class="panel detail" hidden>
     <h2>Účty majitelů</h2>
     <div id="owner-list"></div>
@@ -108,11 +125,13 @@
     <h2 id="vehicle-editor-title">Vozidlo</h2>
     <label>Tovární značka<input name="make" maxlength="80" placeholder="Např. Škoda"></label>
     <label>Model<input name="model" maxlength="80" placeholder="Např. Octavia"></label>
+    <label>Ikona na mapě<select name="mapIcon"><option value="sedan">Sedan</option><option value="estate">Kombi</option><option value="suv">SUV</option><option value="van">Dodávka</option><option value="hatch">Hatchback</option></select></label><span id="map-icon-preview" aria-hidden="true"></span>
     <label>Profilový obrázek<input name="photo" type="file" accept="image/*"></label>
     <label class="inline-choice" id="remove-vehicle-photo" hidden><input name="removePhoto" type="checkbox"> Odstranit stávající obrázek</label>
     <div class="actions"><button type="button" data-close>Zavřít</button><button type="submit" class="primary">Uložit vozidlo</button></div>
   </form>
 </dialog>
+<dialog id="fleet-driver-editor"><form id="fleet-driver-form"><h2>Přiřadit řidiče</h2><label>Řidič<select name="driver" required></select></label><div class="actions"><button type="button" data-close>Zavřít</button><button class="primary" type="submit">Přiřadit</button></div></form></dialog>
 <dialog id="driver-vehicle-editor" aria-labelledby="driver-vehicle-title">
   <form id="driver-vehicle-form">
     <h2 id="driver-vehicle-title">Vozidlo řidiče</h2>
@@ -140,10 +159,14 @@
 </dialog>
 <dialog id="permission-editor">
   <form id="permissions-form">
-    <h2>Oprávnění zaměstnance</h2>
+    <h2>Upravit profil zaměstnance</h2>
     <p id="permission-employee"></p>
-    <div id="edit-permissions" class="permission-list"></div>
-    <div class="actions"><button type="button" data-close>Zavřít</button><button class="primary" type="submit">Uložit oprávnění</button></div>
+    <label>Jméno<input name="firstName" required maxlength="80"></label>
+<label>Příjmení<input name="lastName" required maxlength="80"></label>
+<label>Přihlašovací jméno<input name="username" required minlength="2" maxlength="40"></label>
+<label>Nové heslo<input name="password" type="password" minlength="12" maxlength="128" autocomplete="new-password"></label>
+<label>Pracovní pozice<select name="role"><option value="driver">Řidič</option><option value="dispatcher">Dispečer</option></select></label><div id="edit-permissions" class="permission-list"></div>
+    <div class="actions"><button type="button" data-close>Zavřít</button><button class="primary" type="submit">Uložit profil</button></div>
   </form>
 </dialog>
 </main>
@@ -153,7 +176,7 @@
     <h2 id="job-edit-title"></h2>
     <p id="job-cancel-text" hidden>Zrušením zakázky se ukončí její zpracování a vozidlo se uvolní, pokud má řidič nastavený stav Volný.</p>
     <fieldset id="job-details" hidden>
-      <label>Jméno a příjmení<input name="name" required maxlength="120"></label>
+      <label>Jméno a příjmení<input name="name" required maxlength="121"></label>
       <label>Vyzvednutí<input name="pickup" required maxlength="200"></label>
       <label>Doručení<input name="dropoff" required maxlength="200"></label>
       <label>Cena v Kč<input name="price" required type="number" min="0" max="100000" step=".01"></label>
