@@ -83,6 +83,7 @@ for(const button of rideForm.querySelectorAll('[data-next]')) button.addEventLis
 for(const button of rideForm.querySelectorAll('[data-back]')) button.addEventListener('click',()=>showStep(Number(button.dataset.back)));
 let stopTimer;
 function stopsChanged(){
+  $('#stop-rule').hidden=!$('#stop-list').childElementCount;
   summarizeRoute();
   expectedCents=undefined;
   fareLookup?.abort();
@@ -110,6 +111,7 @@ $('#add-stop').addEventListener('click',()=>{
 });
 function resetRide(){
   $('#stop-list').replaceChildren();
+  $('#stop-rule').hidden=true;
   showStep(0);
   rideForm.reset();
   rideForm.elements.rewardKey.value='';
@@ -424,7 +426,16 @@ async function openPage(name){
   if(!panel.open) panel.showModal();
   if(name==='booking') void refreshFare();
   try{
-    if(name==='profile'){
+    if(name==='booking'){
+      const rule=$('#stop-rule');
+      rule.textContent='';
+      const {fareMode='automatic'}=await api('info');
+      rule.textContent={
+        automatic:'Za každou mezizastávku připočítáme 60 až 100 % ceny jízdy podle aktuálního vytížení taxislužby.',
+        fixed:'Při pevné ceně po městě účtujeme za každou mezizastávku další městskou jízdu.',
+        manual:'Cenu jízdy s mezizastávkou určí dispečink.'
+      }[fareMode];
+    }else if(name==='profile'){
       profileForm.reset();
       for(const field of ['username','email','phone']) profileForm.elements[field].value=account[field];
     }else if(name==='history'){

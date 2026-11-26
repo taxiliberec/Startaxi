@@ -213,20 +213,23 @@ function customerFare(state,ride,route,now=Date.now()){
   if(!route) return null;
   const mode=customerFareMode(state);
   const fixedFare=state.customerSettings?.fixedFare;
-  if(mode==='fixed'&&Number.isInteger(fixedFare)) return fixedFare*100;
+  if(mode==='fixed'&&Number.isInteger(fixedFare)) return fixedFare*100*(1+ride.stops.length);
   if(mode!=='automatic') return null;
 
   const points=[route.pickup,...(route.stops||[]),route.target];
   const distance=points.slice(1).reduce((total,point,index)=>total+meters(points[index],point),0);
   const base=distance<=2000?90:distance<=5000?120:150;
-  if(ride.scheduled) return base*100;
+  if(ride.scheduled&&!ride.stops.length) return base*100;
 
   const until=pragueTime.format(now+30*60*1000).replace(' ','T');
   const waiting=state.jobs.filter(job=>job.status==='waiting'&&(!job.scheduled||job.scheduled<=until)).length;
   const available=fleet(state).filter(({id})=>activePosition(state,id,now)&&
     allows(permissionsFor(state,id),'driverRide')&&!state.occupied?.[id]&&!busy(state,id)).length;
   const adjustment=waiting===0&&available>0?-30:Math.min(150,Math.max(0,waiting-available)*30);
-  return (base+adjustment)*100;
+  const regularFare=ride.scheduled?base:base+adjustment;
+  const excessJobs=Math.max(0,waiting-available);
+  const stopPercent=60+Math.min(5,excessJobs)*8;
+  return regularFare*(100+ride.stops.length*stopPercent);
 }
 const customerRide=({id,pickup,dropoff,stops=[],scheduled,payment,created,done,status,confirmedAt,rejectedAt,cents,priceSet,rewardDiscountCents,rewardName})=>({
   id,pickup,dropoff,stops,scheduled,payment,created,done,
