@@ -221,3 +221,9 @@
 .promo-draft,.promo-level{min-width:0;border:1px solid #ced7e3;border-radius:12px;padding:16px;display:grid;gap:12px}
 .promo-level{background:#f5f7fa}.promo-list details{padding:14px;border-radius:12px;background:#e9eef5}
 .promo-list summary{cursor:pointer;font-weight:700}.promo-list p,.promo-list ol{margin:12px 0}
+
+@media (any-pointer: coarse) {
+  html { touch-action: manipulation; }
+  /* Mobile Safari zooms when a focused field uses text smaller than 16px. */
+  input, textarea, select { font-size: max(16px, 1rem) !important; }
+}
