@@ -3,7 +3,7 @@
   "name": "taximetr · Dispečink Liberec",
   "short_name": "taximetr",
   "lang": "cs",
-  "start_url": "/",
+  "start_url": "/index.html",
   "scope": "/",
   "display": "standalone",
   "theme_color": "#101827",

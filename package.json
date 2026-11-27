@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "build": "node build.mjs",
-    "start": "node server.mjs"
+    "start": "node server.mjs",
+    "test": "npm run build && node tests/reliability.test.mjs"
   },
   "dependencies": {
     "@maplibre/maplibre-gl-leaflet": "0.1.4",
