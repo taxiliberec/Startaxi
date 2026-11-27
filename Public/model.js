@@ -58,7 +58,7 @@ export const fleet = state => [
     const profile=state.profiles?.[driver.id]??state.userNames?.[driver.id];
     return profile?{...driver,name:profile.firstName+' '+profile.lastName,lastName:profile.lastName}:{...driver,lastName:driver.name.split(' ').at(-1)};
   }),
-  ...[...Object.values(state.employees||{}),...Object.values(state.profiles||{}).filter(profile=>profile.role==='driver'&&!drivers.some(driver=>driver.id===profile.id))].filter(employee=>!state.removedUsers?.[employee.id]&&!state.inactiveEmployees?.[employee.id]&&employeeRole(state,employee.id)==='driver').map(({id,firstName,lastName})=>({id,name:firstName+' '+lastName,lastName}))
+  ...[...Object.values(state.employees||{}),...Object.values(state.profiles||{}).filter(profile=>!state.employees?.[profile.id]&&profile.role==='driver'&&!drivers.some(driver=>driver.id===profile.id))].filter(employee=>!state.removedUsers?.[employee.id]&&!state.inactiveEmployees?.[employee.id]&&employeeRole(state,employee.id)==='driver').map(({id,firstName,lastName})=>({id,name:firstName+' '+lastName,lastName}))
 ];
 const dayFormat = new Intl.DateTimeFormat('sv-SE',{timeZone:'Europe/Prague'});
 export const day = (t=Date.now()) => dayFormat.format(t);
@@ -169,7 +169,7 @@ export function change(s,actor,a,now=Date.now()){
       requireThat(fleet(s).some(d=>d.id===actor)&&validPoint(a)&&Number.isFinite(a.accuracy)&&a.accuracy>=0,'Neplatná GPS poloha.');
       const measured=Number.isFinite(a.measured)?a.measured:now;
       requireThat(measured>=now-30000&&measured<=now+10000,'GPS měření je zastaralé.');
-      if(measured>=(s.positions[actor]?.measured??0)){
+      if(measured>(s.positions[actor]?.measured??s.positions[actor]?.time??0)){
         s.positions[actor]={lat:a.lat,lng:a.lng,accuracy:a.accuracy,time:Math.min(measured,now),measured};
       }
       break;

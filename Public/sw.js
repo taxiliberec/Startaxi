@@ -21,6 +21,6 @@ self.addEventListener('notificationclick', event=>{
       const url=new URL(client.url);
       return url.origin===self.location.origin&&!url.pathname.startsWith('/customer/');
     });
-    return app?app.focus():self.clients.openWindow('/');
+    return app?app.focus():self.clients.openWindow('/index.html');
   }));
 });

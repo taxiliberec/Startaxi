@@ -136,7 +136,7 @@ function customerReward(loyalty,key,cents){
     credits.push({id:credit.id,points});
     remaining-=reward.unit==='rides'?1:points;
   }
-  return {discountCents,credits,name:reward.name};
+  return {discountCents,credits,name:reward.name,promoRule:{kind:'amount',discount:reward.discount}};
 }
 function customerUsername(value){
   const username=normalizeUsername(value);
@@ -190,7 +190,7 @@ async function customerCityRoute(ride){
   const lookup=async (address,point)=>{
     const street=foldStreet(address).split(',')[0];
     const exact=(liberecAddresses(address)||[]).find(match=>foldStreet(match.address).split(',')[0]===street);
-    if(exact&&(!point||(point.lat===exact.point.lat&&point.lng===exact.point.lng))) return exact.point;
+    if(exact&&(!exact.street||!point||(point.lat===exact.point.lat&&point.lng===exact.point.lng))) return exact.point;
     if(point){
       const city=await ruianQuery(12,{
         where:'kod='+liberecCode,geometry:point.lng+','+point.lat,geometryType:'esriGeometryPoint',
@@ -367,7 +367,8 @@ async function customerApi(request,env,action){
         id:++s.seq,customerId:current.id,name:current.firstName+' '+current.lastName,
         phone:current.phone,note:'Zákaznická objednávka',
         created:now,status:'waiting',cents:total??0,priceSet:total!==null,
-        ...(reward?.promoRewardKey?{promoRewardKey:reward.promoRewardKey,promoRule:reward.promoRule,baseCents:fare}:{}),
+        ...(reward?.promoRewardKey?{promoRewardKey:reward.promoRewardKey}:{}),
+        ...(reward?.promoRule?{promoRule:reward.promoRule,baseCents:fare}:{}),
         ...(reward?{rewardCredits:reward.credits,rewardDiscountCents:reward.discountCents,rewardName:reward.name}:{})
       });
       record(s,'customer','create',s.seq);

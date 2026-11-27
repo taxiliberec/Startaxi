@@ -186,6 +186,7 @@ async function updateState(db,apply){
       ? await db.saveState(state,revision)
       : (await db.prepare('UPDATE dispatch SET revision=revision+1,data=? WHERE id=1 AND revision=?').bind(JSON.stringify(state),revision).run()).meta.changes===1;
     if(saved) return {state,revision:revision+1};
+    if(attempt<7) await new Promise(resolve=>setTimeout(resolve,1+Math.random()*Math.min(128,4*2**attempt)));
   }
   throw Error('Probíhá více změn najednou. Zkuste akci znovu.');
 }
@@ -742,7 +743,7 @@ async function handleApi(request,env,path){
       if(action.type==='availability') return;
       record(s,actor,action.type,['create','createOwn'].includes(action.type)?s.seq:action.id??action.date);
     });
-    if(action.type==='assign') void sendRidePush(env,state,action.driver).catch(()=>console.error('Oznámení o nové zakázce se nepodařilo odeslat.'));
+    if(action.type==='assign') await sendRidePush(env,state,action.driver).catch(()=>console.error('Oznámení o nové zakázce se nepodařilo odeslat.'));
     return json(view(state,actor,revision,users));
   }
   return json({error:'Stránka neexistuje.'},404);
