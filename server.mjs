@@ -46,6 +46,26 @@ async function postgresStore(connectionString){
       throw Error('Provozní databáze je nedostupná.');
     }
   }
+  // Existing installations can run with a role limited to reading and updating dispatch.
+  const {rows:[schema]}=await query("SELECT to_regclass('public.dispatch') AS dispatch");
+  if(!schema.dispatch){
+    const client=await pool.connect();
+    try{
+      await client.query('BEGIN');
+      await client.query("SELECT pg_advisory_xact_lock(hashtext('startaxi:init:dispatch'))");
+      const {rows:[current]}=await client.query("SELECT to_regclass('public.dispatch') AS dispatch");
+      if(!current.dispatch){
+        const initSql=readFileSync(new URL('./postgres-init.sql',import.meta.url),'utf8');
+        await client.query(initSql);
+      }
+      await client.query('COMMIT');
+    }catch(error){
+      await client.query('ROLLBACK');
+      throw error;
+    }finally{
+      client.release();
+    }
+  }
   return {
     async readState(){
       const {rows}=await query('SELECT revision, data FROM public.dispatch WHERE id=1');
