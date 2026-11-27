@@ -135,3 +135,9 @@ legend { font-weight: 650; font-size: .875rem; }
 #route-summary li::before {content:'';width:.45rem;height:.45rem;border:2px solid #aac2d1;border-radius:50%}
 #route-summary li:first-child::before {border-color:var(--gold)}
 #route-summary li:last-child::before {border-radius:1px;background:#aac2d1}
+
+@media (any-pointer: coarse) {
+  html { touch-action: manipulation; }
+  /* Mobile Safari zooms when a focused field uses text smaller than 16px. */
+  input, textarea, select { font-size: max(16px, 1rem) !important; }
+}

@@ -249,3 +249,9 @@
  #dispatch .queuepanel .panelhead {padding-inline:8px}
  #dispatch .dispatch-center .mappanel {order:0}
 }
+
+@media (any-pointer: coarse) {
+  html { touch-action: manipulation; }
+  /* Mobile Safari zooms when a focused field uses text smaller than 16px. */
+  input, textarea, select { font-size: max(16px, 1rem) !important; }
+}
