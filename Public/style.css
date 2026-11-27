@@ -187,12 +187,6 @@
 .top nav button:focus-visible, .ride-panel button:focus-visible { outline: 3px solid #e8ad00; outline-offset: -3px; }
 .ride-panel { border-top: 4px solid var(--blue); }
 .ride-panel .actions button, .top nav button { min-height: 44px; }
-@media(max-width:570px) {
-  #dispatch .mappanel { grid-column: auto; grid-row: auto; }
-  #dispatch { display: flex; flex-direction: column; }
-  #dispatch .formpanel { order: 1; }
-  #dispatch .mappanel { order: 2; }
-}
 
 [data-ride-status] { display: inline-block; border-radius: 8px; padding: .2em .65em; font-weight: 700; }
 [data-ride-status="waiting"], [data-ride-status="confirmed"] { background: #fff0bd; color: #674600; }
