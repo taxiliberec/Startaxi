@@ -187,12 +187,6 @@
 .top nav button:focus-visible, .ride-panel button:focus-visible { outline: 3px solid #e8ad00; outline-offset: -3px; }
 .ride-panel { border-top: 4px solid var(--blue); }
 .ride-panel .actions button, .top nav button { min-height: 44px; }
-@media(max-width:570px) {
-  #dispatch .mappanel { grid-column: auto; grid-row: auto; }
-  #dispatch { display: flex; flex-direction: column; }
-  #dispatch .formpanel { order: 1; }
-  #dispatch .mappanel { order: 2; }
-}
 
 [data-ride-status] { display: inline-block; border-radius: 8px; padding: .2em .65em; font-weight: 700; }
 [data-ride-status="waiting"], [data-ride-status="confirmed"] { background: #fff0bd; color: #674600; }
@@ -221,10 +215,6 @@
 .promo-draft,.promo-level{min-width:0;border:1px solid #ced7e3;border-radius:12px;padding:16px;display:grid;gap:12px}
 .promo-level{background:#f5f7fa}.promo-list details{padding:14px;border-radius:12px;background:#e9eef5}
 .promo-list summary{cursor:pointer;font-weight:700}.promo-list p,.promo-list ol{margin:12px 0}
-#dispatch.workspace {display:grid;grid-template-columns:minmax(0,.8fr) minmax(0,1.7fr) minmax(0,1fr);align-items:start}
-.dispatch-center {display:grid;gap:12px;min-width:0}
-.dispatch-center .panel {min-width:0}
-#dispatch .mappanel {grid-column:auto;grid-row:auto}
 #vehicle-status:not([hidden]):not(:empty){display:flex;gap:18px;overflow-x:auto;margin:0 0 14px;padding:8px 4px}
 #dispatch-driver-list {padding:8px;display:grid;gap:5px}
 #dispatch-driver-list button {display:grid;text-align:left;overflow-wrap:anywhere}
@@ -238,17 +228,6 @@
 #dispatch [data-customer-decision="confirmCustomerRide"]{background:#187843;color:white}
 #dispatch [data-customer-decision="rejectCustomerRide"]{background:#b92b36;color:white}
 #dispatch-stops:empty{display:none}
-#dispatch:has(> [hidden]),#dispatch:has(>.dispatch-center[hidden]){grid-template-columns:repeat(auto-fit,minmax(min(280px,100%),1fr))}
-@media(max-width:820px){
- #dispatch.workspace {grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
- #dispatch .dispatch-center {grid-column:1/-1;grid-row:1}
- #dispatch .queuepanel {grid-row:2;grid-column:1}
- #dispatch .dispatch-drivers {grid-row:2;grid-column:2}
- #dispatch :is(.queuepanel,.dispatch-drivers){min-width:0;overflow-wrap:anywhere}
- #dispatch .queuepanel :is(.tabs,.jobtop,.jobfoot,.assignment-status){flex-wrap:wrap}
- #dispatch .queuepanel .panelhead {padding-inline:8px}
- #dispatch .dispatch-center .mappanel {order:0}
-}
 
 @media (any-pointer: coarse) {
   html { touch-action: manipulation; }

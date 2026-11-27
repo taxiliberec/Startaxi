@@ -466,8 +466,6 @@ function render(){
  if(page==='employees'&&isOwner(actor)){renderUserSettings();renderFleetSettings();}
  if(page==='customers'&&isOwner(actor)) renderCustomerSettings();
  document.querySelectorAll('[data-permission]').forEach(el=>el.hidden=!can(el.dataset.permission));
- $('.intro').hidden=page==='dispatch';
- $('.dispatch-center').hidden=!can('fleetMap')&&!can('create');
  $('#vehicle-status').hidden=page!=='dispatch'||!can('fleetMap');
  $('#driver-map-panel').hidden=!can('gps')&&!can('driverRide');
  $('#dispatch').setAttribute('data-panels',['create','fleetMap','dispatchJobs'].filter(can).length);
