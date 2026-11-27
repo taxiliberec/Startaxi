@@ -458,7 +458,7 @@ function render(){
  $('#dispatch').hidden=page!=='dispatch';
  $('#history').hidden=page!=='history';
  $('#driver').hidden=page!=='driver';
- const statsAnchor=page==='driver'?$('#driver-map-panel'):$('#vehicle-status');
+ const statsAnchor=page==='driver'?$('#driver-map-panel'):$('.intro');
  if(statsAnchor.nextElementSibling!==$('#stats')) statsAnchor.after($('#stats'));
  $('#activity').hidden=page!=='activity';
  $('#settings').hidden=page!=='settings';
